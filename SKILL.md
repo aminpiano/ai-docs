@@ -16,6 +16,12 @@ Generate 12 AI-optimized documentation files in `ai-docs/` using agent teams.
 
 **Architecture**: Main session is a lightweight orchestrator. All heavy lifting happens in spawned agents. Information flows through files, not the main session's context.
 
+## Documentation Principles
+
+- **Language**: Always write in English. These are reference docs for AI agents — no localization needed regardless of the project's human-facing language.
+- **Format**: Structured, machine-parseable formats only. No prose paragraphs. Priority: table > bullet list > code block > prose.
+- **No hard line limits**: Write as much as needed for completeness. If a single doc grows unwieldy, split into sub-files with an INDEX.
+
 ```
 Main Session (Orchestrator)
   │
@@ -130,7 +136,7 @@ You are the scout agent for AI project documentation generation.
    C. TODO Registry (pre-assigned IDs)
    D. Section Numbering Scheme (all 11 documents)
 4. Write to: ai-docs/.skeleton.md
-5. Constraint: ~200 lines max. Metadata only.
+5. Keep it concise — metadata only. If skeleton grows large, split into sections.
 
 ## Working Directory
 [ABSOLUTE PATH TO PROJECT ROOT]
