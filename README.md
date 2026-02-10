@@ -2,32 +2,69 @@
 
 AI-optimized project documentation generator for Claude Code.
 
-Creates structured docs that enable **any AI** (Claude, GPT, Gemini) to immediately work on a project.
+Creates structured docs that enable **any AI** to immediately work on a project — using agent teams for parallel generation and review.
 
-## What it does
-
-Generates a `.ai-docs/` folder with:
+## Architecture
 
 ```
-.ai-docs/
-├── INDEX.md        # Entry point - AI reads this first
-├── architecture.md # Tech stack, patterns, components
-├── api.md          # Endpoints, schemas, auth
-├── database.md     # Tables, relationships, queries
-├── deployment.md   # Build, deploy, env vars
-└── workflows.md    # User flows, state transitions
+Main Session (Orchestrator)
+  │
+  ├─ Scout agent ──→ .skeleton.md (project analysis)
+  │
+  ├─ Write Team (parallel)
+  │    ├─ writer-1 ──→ docs 01-04
+  │    ├─ writer-2 ──→ docs 05-07
+  │    └─ writer-3 ──→ docs 08-11
+  │
+  └─ Review Team (parallel → sequential)
+       ├─ reviewer-1 ──→ deep review 01-04
+       ├─ reviewer-2 ──→ deep review 05-07
+       ├─ reviewer-3 ──→ deep review 08-11
+       └─ cross-checker ──→ verify + 00_INDEX.md
+```
+
+## Output
+
+```
+ai-docs/
+├── SPEC.md              # Generation specification (reusable)
+├── .skeleton.md         # Project analysis metadata
+├── 00_INDEX.md          # Entry point - AI reads this first
+├── 01_ENVIRONMENT.md    # Runtime, env vars, commands
+├── 02_DEPENDENCIES.md   # Full dependency spec
+├── 03_ARCHITECTURE.md   # System structure, data flow (Mermaid)
+├── 04_STRUCTURE.md      # Directory tree, entry points
+├── 05_DATA_MODELS.md    # DB schema, type definitions
+├── 06_API.md            # HTTP endpoints, auth
+├── 07_BUSINESS_LOGIC.md # Core logic, server mutations
+├── 08_DEBUG.md          # Logs, tests, troubleshooting
+├── 09_STANDARDS.md      # Coding conventions, anti-patterns
+├── 10_WARNINGS.md       # Side-effects, do-not-touch areas
+└── 11_TODO.md           # Bugs, incomplete features, future plans
 ```
 
 ## Installation
 
-Copy `SKILL.md` to your Claude Code skills folder:
+### As a Claude Code skill (recommended)
 
 ```bash
-# Windows
-cp SKILL.md %USERPROFILE%\.claude\skills\ai-project-docs\SKILL.md
-
 # macOS/Linux
-cp SKILL.md ~/.claude/skills/ai-project-docs/SKILL.md
+mkdir -p ~/.claude/skills
+cp SKILL.md ~/.claude/skills/ai-project-docs.skill
+
+# Or package as ZIP first
+cd /path/to/ai-docs
+zip ai-project-docs.skill SKILL.md
+cp ai-project-docs.skill ~/.claude/skills/
+```
+
+### SPEC.md (optional, per-project customization)
+
+Copy `SPEC.md` into your project's `ai-docs/` directory to customize generation rules. If not present, the skill generates a default SPEC automatically.
+
+```bash
+mkdir -p your-project/ai-docs
+cp SPEC.md your-project/ai-docs/SPEC.md
 ```
 
 ## Usage
@@ -35,63 +72,47 @@ cp SKILL.md ~/.claude/skills/ai-project-docs/SKILL.md
 In Claude Code:
 
 ```
+/ai-project-docs
+```
+
+Or natural language:
+
+```
 "Generate AI docs for this project"
 "Create AI documentation"
-"Make this project AI-friendly"
+"Document this project for AI"
 ```
 
-## Features
+## How It Works
 
-### Parallel Task Architecture
+### Phase 0: Scout
 
-For large projects, uses parallel Tasks to prevent context overflow:
+A scout agent explores the entire codebase and produces a **skeleton** — a ~200-line metadata file containing shared facts, cross-reference map, TODO registry, and section numbering. This ensures all writer agents share the same understanding.
 
-| Project Size | Strategy |
-|--------------|----------|
-| Small (< 50 files) | Single Task |
-| Medium (50-200) | 2-3 parallel Tasks |
-| Large (200-500) | 5-6 parallel Tasks |
-| Very Large (500+) | 10+ Tasks + hierarchical INDEX |
+### Phase 1: Write Team
 
-### Minimal Context Usage
+3-4 writer agents work in parallel, each reading SPEC.md + skeleton from disk. Each agent reads the relevant source code and writes 2-4 documentation files.
 
-Main session reads only ~60 lines total:
-- Phase 1: package.json + structure (~50 lines)
-- Phase 2-3: Tasks handle everything (0 lines)
-- Phase 4: File verification (~10 lines)
+### Phase 2: Review Team
 
-### Smart Model Selection
+3-4 reviewer agents deeply review the drafts (expected ~65-80% completeness), re-reading source code to find gaps and inaccuracies. After all reviewers finish, a cross-checker verifies structural integrity and writes `00_INDEX.md`.
 
-| Task | Model |
-|------|-------|
-| File scanning | haiku |
-| Code extraction | haiku |
-| Doc writing | sonnet |
-| INDEX generation | sonnet |
+### Key Design Decisions
 
-## Output Example
+| Decision | Reason |
+|----------|--------|
+| Main session reads no source code | Prevents context overflow in orchestrator |
+| Info flows through files, not prompts | SPEC.md + .skeleton.md are read by agents directly |
+| Separate write and review teams | Writers have blind spots; fresh eyes catch more |
+| Cross-checker runs last | Needs final state of all documents |
+| Skeleton limits ~200 lines | Keeps per-agent context overhead minimal |
 
-```markdown
-# MyApp - AI Documentation
+## Files
 
-> E-commerce platform with React + Node.js
-
-## Quick Reference
-
-| Aspect | Value |
-|--------|-------|
-| Frontend | React 18, TypeScript |
-| Backend | Node.js 20, Express |
-| Database | PostgreSQL 15 |
-
-## Docs
-
-| Doc | When to Read |
-|-----|--------------|
-| [architecture.md](architecture.md) | Tech stack, patterns |
-| [api.md](api.md) | API endpoints |
-| [database.md](database.md) | Schema, queries |
-```
+| File | Purpose |
+|------|---------|
+| `SKILL.md` | Claude Code skill — orchestration logic, agent prompts, tool API reference |
+| `SPEC.md` | Generation specification — hard rules, document requirements, verification checklist |
 
 ## License
 
