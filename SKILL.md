@@ -128,10 +128,21 @@ You are the scout agent for AI project documentation generation.
    - API surface (routes, server actions, endpoints)
    - Config files (tsconfig, docker-compose, CI/CD, env templates)
    - Entry points (main pages, router structure, middleware)
+   - Classification facts: any per-file property that multiple documents might describe independently.
+     Grep/read every source file for file-level directives, configuration exports, and module markers.
+     Examples by ecosystem (adapt to the actual project):
+       * JS/TS: "use client" / "use server", export const dynamic/revalidate/runtime, barrel re-exports
+       * Rust: #![no_std], #[cfg(feature)], pub mod boundaries
+       * Python: __all__, TYPE_CHECKING blocks, abstract base classes
+       * Go: //go:build tags, internal/ package boundaries
+     Output a Classification Map table in Shared Facts: file → classification value.
+     This is critical — if the skeleton omits a classification, parallel writers will independently guess it and contradict each other.
    - Explicit TODOs/FIXMEs (Grep sweep for TODO, FIXME, HACK, BUG, WORKAROUND)
    - Implicit issues discovered during analysis
 3. Generate the skeleton per SPEC §1-2:
-   A. Shared Facts
+   A. Shared Facts (two sub-tables required):
+      - Value Facts: versions, paths, ports, counts — scalar values
+      - Classification Map: file → category/directive/flag for every file that has a classifiable property
    B. Cross-Reference Map
    C. TODO Registry (pre-assigned IDs)
    D. Section Numbering Scheme (all 11 documents)
@@ -237,18 +248,23 @@ You are a documentation writer agent in the "ai-docs-gen" team.
 2. Read relevant source files (identify from skeleton + your own exploration)
 3. Write ai-docs/XX_FILE.md following:
    - SPEC rules (evidence-based, tables over prose)
-   - Skeleton's Shared Facts (do NOT re-derive independently)
+   - Skeleton's Shared Facts — BOTH Value Facts AND Classification Map (do NOT re-derive independently)
    - Skeleton's Section Numbering (§ numbers exactly as assigned)
    - Skeleton's Cross-Reference Map (canonical = full detail, mention = one-line + → ref)
    - ## Evidence at end
    - Metadata: > Generated: YYYY-MM-DD | Based on commit: <hash from skeleton>
 4. TaskUpdate({ "taskId": "<id>", "status": "completed" })
 
+## Conflict Escalation Rule
+If you encounter a cross-cutting fact (component category, rendering mode, config flag, etc.)
+that is NOT in the skeleton's Shared Facts or Classification Map, do NOT guess.
+Flag it in your completion message so the orchestrator or reviewer can resolve it.
+
 ## Step 4: When All Done
 SendMessage({
   "type": "message",
   "recipient": "leader",
-  "content": "Completed: [files]. Notes: [observations]",
+  "content": "Completed: [files]. Notes: [observations]. Unresolved classifications: [list or 'none']",
   "summary": "Docs XX-YY complete"
 })
 
@@ -361,9 +377,12 @@ Your goal is to bring them to ~95%+ by finding and fixing gaps.
    - Are cross-references valid and following the skeleton's map?
    - Are § numbers matching the skeleton?
    - Is the ## Evidence section complete?
+   - **Classification check**: Does the document classify any file/component/module?
+     If yes, verify against the skeleton's Classification Map AND the actual source file.
+     If the document contradicts the skeleton, fix the document.
 5. Fix all issues using the Edit tool:
    - Add missing content (endpoints, fields, env vars, commands, etc.)
-   - Correct inaccuracies
+   - Correct inaccuracies (especially classification mismatches — server/client, static/dynamic, etc.)
    - Add missing cross-references
    - Expand thin sections that lack detail
    - Ensure evidence section lists ALL files you referenced
@@ -417,33 +436,48 @@ You do NOT need to deeply read document body content — focus on structure and 
 1. ai-docs/SPEC.md — §0-6 (Verification checklist) and §3 (INDEX rules)
 2. ai-docs/.skeleton.md — for cross-checking
 
-## Step 2: For Each Document (01 through 11)
-Read only enough to verify:
-- [ ] File exists
-- [ ] All §N section headers present (match skeleton's Section Numbering Scheme)
-- [ ] ## Evidence section exists
-- [ ] Cross-references (`→ Detail: XX_FILE.md §N`) point to sections that actually exist
-- [ ] Shared Facts (versions, paths, commit hash) match skeleton across all documents
-- [ ] Metadata line present: `> Generated: YYYY-MM-DD | Based on commit: <hash>`
-- [ ] 09_STANDARDS anti-patterns reference 11_TODO IDs where applicable
-- [ ] 11_TODO includes all items from skeleton's TODO Registry
+## Step 2: Verify Each Document (01 through 11)
+Read only enough to verify these 8 items per document:
+- [ ] 1. File exists and has correct filename
+- [ ] 2. All §N section headers present (match skeleton's Section Numbering Scheme)
+- [ ] 3. ## Evidence section exists and lists source files
+- [ ] 4. Cross-references (`→ Detail: XX_FILE.md §N`) point to sections that actually exist
+- [ ] 5. Shared Facts (Value Facts + Classification Map) match skeleton across all documents
+- [ ] 6. Metadata line present: `> Generated: YYYY-MM-DD | Based on commit: <hash>`
+- [ ] 7. 09_STANDARDS anti-patterns reference 11_TODO IDs where applicable
+- [ ] 8. 11_TODO includes all items from skeleton's TODO Registry
+
+**Classification consistency check**: For every file listed in the skeleton's Classification Map,
+verify that ALL documents mentioning that file use the SAME classification.
+If two documents disagree (e.g., one calls a component "server", another calls it "client"),
+check the actual source file and fix ALL incorrect documents.
 
 Fix any structural issues with Edit tool.
 
 ## Step 3: Write 00_INDEX.md
 Write ai-docs/00_INDEX.md following SPEC §3:
-- §3-1 Project Identity table
-- §3-2 Quick Start (minimum command sequence, all steps explicit, no secrets)
-- §3-3 Document Map with Common Task Routing table
-- §3-4 Critical Warnings Summary (3-5 lines, → 10_WARNINGS.md §N)
+- §0-1 Project Identity table
+- §0-2 Quick Start (minimum command sequence, all steps explicit, no secrets)
+- §0-3 Document Map with Common Task Routing table
+- §0-4 Critical Warnings Summary (3-5 lines, → 10_WARNINGS.md §N)
 
-## Step 4: Final Verification Output
+NOTE: INDEX uses the §0-N namespace to avoid collision with 03_ARCHITECTURE's §3-N.
+
+## Step 4: Self-Verify 00_INDEX.md
+Apply the same 8-item checklist from Step 2 to your own 00_INDEX.md:
+- [ ] All §0-N section headers present
+- [ ] ## Evidence section exists (list ALL 11 docs + skeleton + any source files you read)
+- [ ] Metadata line present
+- [ ] No speculation — only observable facts
+The cross-checker has no external reviewer — you must verify your own output.
+
+## Step 5: Final Report
 TaskUpdate({ "taskId": "<id>", "status": "completed" })
 
 SendMessage({
   "type": "message",
   "recipient": "leader",
-  "content": "Cross-check complete.\n\n## Verification Checklist\n- [x/] item...\n\nFixes applied: [list or 'none']\n00_INDEX.md written.",
+  "content": "Cross-check complete.\n\n## 8-Item Checklist (per doc)\n[results table]\n\n## Classification Consistency\n[conflicts found and resolved, or 'none']\n\nFixes applied: [list or 'none']\n00_INDEX.md written and self-verified.",
   "summary": "Cross-check and INDEX complete"
 })
 
@@ -487,10 +521,18 @@ Summarize:
 
 If `ai-docs/SPEC.md` does not exist, create it before proceeding. The default SPEC must cover:
 
-1. **§0 Hard Rules**: Evidence-based writing, Evidence sections, output format (UTF-8, Mermaid fences, code blocks), metadata (date + commit hash), cross-reference principle (canonical source priority table), verification checklist (8 items), INDEX last, security (no secrets), section numbering (§N format)
-2. **§1 Execution Model**: 3-Phase (scout → write team → review team), Phase 0 skeleton structure (Shared Facts, Cross-Reference Map, TODO Registry with ID rules, Section Numbering), Phase 1 parallel writing rules, Phase 2 parallel review + cross-check
+1. **§0 Hard Rules**: Evidence-based writing, Evidence sections, output format (UTF-8, Mermaid fences, code blocks), metadata (date + commit hash), cross-reference principle (canonical source priority table), verification checklist (the 8 items below), INDEX last, security (no secrets), section numbering (§N format). The 8-item verification checklist that reviewers and cross-checker must apply to every document:
+   1. File exists with correct filename
+   2. All §N section headers match skeleton's numbering scheme
+   3. `## Evidence` section exists listing source files
+   4. Cross-references (`→ Detail:`) resolve to existing sections
+   5. Shared Facts (Value Facts + Classification Map) match skeleton
+   6. Metadata line present (`> Generated: ...`)
+   7. Anti-patterns in 09 reference TODO IDs from 11
+   8. TODO registry in 11 includes all skeleton items
+2. **§1 Execution Model**: 3-Phase (scout → write team → review team), Phase 0 skeleton structure (Value Facts, Classification Map, Cross-Reference Map, TODO Registry with ID rules, Section Numbering), Phase 1 parallel writing rules (writers must use skeleton classifications verbatim — never re-derive), Phase 2 parallel review + cross-check (cross-checker must self-verify their own 00_INDEX output)
 3. **§2 File List**: 12 mandatory files (00_INDEX through 11_TODO) with phase assignment
-4. **§3 INDEX Rules**: Project Identity, Quick Start (explicit all steps), Document Map with Common Task Routing (8 default rows), Critical Warnings Summary (3-5 lines with cross-refs)
+4. **§3 INDEX Rules**: Project Identity, Quick Start (explicit all steps), Document Map with Common Task Routing (8 default rows), Critical Warnings Summary (3-5 lines with cross-refs). INDEX uses §0-N namespace (§0-1 through §0-4) to avoid collision with 03_ARCHITECTURE's §3-N
 5. **§4 Common Principles**: AI audience, format priority (table > bullet > code > prose), N/A handling, Evidence, empty item consolidation, directory tree exclusions, section numbering compliance, ownership principle
 6. **§5 Per-Document Content**: Detailed requirements for all 11 content documents including ownership restrictions (04, 06), boundary rules (06↔07), TODO Registry compliance (09, 11), priority system (P0-P3 with tiebreaker)
 7. **§6 Update Policy**: Regeneration triggers, full-regeneration default, diff verification
