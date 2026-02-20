@@ -89,13 +89,16 @@ TeamDelete()
 
 ---
 
-## Step 0: Ensure SPEC Exists
+## Step 0: Preflight Checks
 
-Check if `ai-docs/SPEC.md` exists.
-- **If exists**: proceed.
-- **If not exists**: generate it per §DEFAULT-SPEC (end of this document), then proceed.
+1. **SPEC exists**: Check if `ai-docs/SPEC.md` exists.
+   - If exists: proceed.
+   - If not exists: generate it per §DEFAULT-SPEC (end of this document), then proceed.
+2. **Directory setup**: Ensure `ai-docs/` directory exists (`mkdir -p ai-docs`).
+3. **Stale state check**: If `ai-docs/.skeleton.md` already exists, warn the user — this may be from a previous incomplete run. Ask whether to continue from existing state or start fresh (delete and regenerate).
+4. **Existing docs backup**: If any `ai-docs/0*.md` or `ai-docs/1*.md` files exist, inform the user that full regeneration will overwrite them.
 
-This is the only file the main session reads directly.
+This is the only step where the main session reads files directly.
 
 ---
 
@@ -146,8 +149,17 @@ You are the scout agent for AI project documentation generation.
    B. Cross-Reference Map
    C. TODO Registry (pre-assigned IDs)
    D. Section Numbering Scheme (all 11 documents)
+   E. File-to-Document Map (optional but recommended for large projects)
+      Map key source directories/files to the documents that should reference them.
+      This helps writers focus their exploration and reduces redundant codebase scanning.
+      Example:
+      | Source Path | Primary Document | Secondary |
+      |------------|-----------------|-----------|
+      | src/routes/ | 06_API | 03_ARCHITECTURE |
+      | prisma/schema.prisma | 05_DATA_MODELS | 10_WARNINGS |
+      | .env.example | 01_ENVIRONMENT | — |
 4. Write to: ai-docs/.skeleton.md
-5. Keep it concise — metadata only. If skeleton grows large, split into sections.
+5. Keep it concise — metadata only. The skeleton MUST remain a single file. If approaching the 200-line limit, compress content (shorter descriptions, merge similar items) rather than splitting.
 
 ## Working Directory
 [ABSOLUTE PATH TO PROJECT ROOT]
@@ -156,7 +168,15 @@ You are the scout agent for AI project documentation generation.
 Report completion with one-line summary (tech stack, file count, etc.).
 ```
 
-**After scout completes**: confirm `ai-docs/.skeleton.md` exists. Do NOT read it.
+**After scout completes**:
+1. Confirm `ai-docs/.skeleton.md` exists
+2. Validate skeleton structure (read ONLY section headers, not body):
+   - `## A. Shared Facts` exists (with both `### Value Facts` and `### Classification Map` sub-headers)
+   - `## B. Cross-Reference Map` exists
+   - `## C. TODO Registry` exists
+   - `## D. Section Numbering Scheme` exists
+   If any section is missing, message the scout to fix it before proceeding.
+3. Do NOT read skeleton body content — keep orchestrator context lightweight.
 
 ---
 
@@ -165,7 +185,9 @@ Report completion with one-line summary (tech stack, file count, etc.).
 ### 2-1. Create Team & Tasks
 
 ```json
-TeamCreate({ "team_name": "ai-docs-gen", "description": "AI docs parallel writing" })
+// Generate unique team name to prevent collision with stale teams from crashed runs
+// Format: ai-docs-gen-{YYYYMMDD-HHmmss} (e.g., ai-docs-gen-20260220-143022)
+TeamCreate({ "team_name": "ai-docs-gen-{timestamp}", "description": "AI docs parallel writing" })
 
 TaskCreate({ "subject": "Generate 01_ENVIRONMENT.md", "description": "Write ai-docs/01_ENVIRONMENT.md per SPEC and skeleton", "activeForm": "Writing 01_ENVIRONMENT.md" })
 TaskCreate({ "subject": "Generate 02_DEPENDENCIES.md", "description": "Write ai-docs/02_DEPENDENCIES.md per SPEC and skeleton", "activeForm": "Writing 02_DEPENDENCIES.md" })
@@ -181,6 +203,10 @@ TaskCreate({ "subject": "Generate 11_TODO.md", "description": "Write ai-docs/11_
 ```
 
 ### 2-2. Assign Tasks
+
+> **Note**: Task IDs shown below (1-11) assume sequential creation within a fresh team.
+> If the Team API assigns different IDs, use the actual IDs returned by TaskCreate.
+> The orchestrator should track the mapping: document name → taskId.
 
 ```json
 // doc-writer-1: Infrastructure (01-04)
@@ -278,6 +304,13 @@ SendMessage({
 TaskList()  // check progress periodically
 ```
 
+**Timeout & retry policy:**
+- Check progress every 2-3 minutes via TaskList()
+- If an agent's task stays `in_progress` for >10 minutes with no file output, send a status check message
+- If still stuck after another 5 minutes, note the failure and proceed with remaining tasks
+- After all other tasks complete, attempt the failed task by spawning a replacement agent
+- If replacement also fails, the orchestrator writes the document directly as fallback
+
 When all 11 tasks completed:
 
 ```json
@@ -286,6 +319,7 @@ SendMessage({ "type": "shutdown_request", "recipient": "doc-writer-2", "content"
 SendMessage({ "type": "shutdown_request", "recipient": "doc-writer-3", "content": "All tasks complete" })
 
 // After all confirm shutdown
+// Uses current team context — no need to specify name
 TeamDelete()
 ```
 
@@ -296,7 +330,9 @@ TeamDelete()
 ### 3-1. Create Team & Tasks
 
 ```json
-TeamCreate({ "team_name": "ai-docs-review", "description": "AI docs review and verification" })
+// Generate unique team name to prevent collision with stale teams from crashed runs
+// Format: ai-docs-review-{YYYYMMDD-HHmmss} (e.g., ai-docs-review-20260220-144500)
+TeamCreate({ "team_name": "ai-docs-review-{timestamp}", "description": "AI docs review and verification" })
 
 // Reviewer tasks (parallel)
 TaskCreate({ "subject": "Review docs 01-04", "description": "Deep review + fix 01_ENVIRONMENT, 02_DEPENDENCIES, 03_ARCHITECTURE, 04_STRUCTURE", "activeForm": "Reviewing docs 01-04" })
@@ -311,6 +347,10 @@ TaskUpdate({ "taskId": "4", "addBlockedBy": ["1", "2", "3"] })
 ```
 
 ### 3-2. Assign Tasks
+
+> **Note**: Task IDs shown below (1-4) assume sequential creation within a fresh team.
+> If the Team API assigns different IDs, use the actual IDs returned by TaskCreate.
+> The orchestrator should track the mapping: document name → taskId.
 
 ```json
 TaskUpdate({ "taskId": "1", "owner": "reviewer-1" })
@@ -430,27 +470,44 @@ Task({
 You are the cross-checker agent in the "ai-docs-review" team.
 
 Your job is structural/metadata verification across all documents + writing 00_INDEX.md.
-You do NOT need to deeply read document body content — focus on structure and metadata.
+
+For structural checks (§ numbers, cross-refs, evidence, metadata): you do NOT need to deeply read body content.
+However, writing 00_INDEX.md REQUIRES reading specific documents for content:
+- 01_ENVIRONMENT.md — needed for Quick Start (§0-2)
+- 02_DEPENDENCIES.md — needed for Quick Start prerequisites (§0-2)
+- 10_WARNINGS.md — needed for Critical Warnings Summary (§0-4)
+Read these three documents thoroughly before writing the INDEX.
 
 ## Step 1: Read These Files
 1. ai-docs/SPEC.md — §0-6 (Verification checklist) and §3 (INDEX rules)
 2. ai-docs/.skeleton.md — for cross-checking
 
 ## Step 2: Verify Each Document (01 through 11)
-Read only enough to verify these 8 items per document:
-- [ ] 1. File exists and has correct filename
-- [ ] 2. All §N section headers present (match skeleton's Section Numbering Scheme)
-- [ ] 3. ## Evidence section exists and lists source files
-- [ ] 4. Cross-references (`→ Detail: XX_FILE.md §N`) point to sections that actually exist
-- [ ] 5. Shared Facts (Value Facts + Classification Map) match skeleton across all documents
-- [ ] 6. Metadata line present: `> Generated: YYYY-MM-DD | Based on commit: <hash>`
-- [ ] 7. 09_STANDARDS anti-patterns reference 11_TODO IDs where applicable
-- [ ] 8. 11_TODO includes all items from skeleton's TODO Registry
+Apply the SPEC §0-6 verification checklist to each document. The 8 items are:
+1. File exists with correct filename
+2. All §N section headers match skeleton's Section Numbering Scheme
+3. `## Evidence` section exists listing source files
+4. Cross-references (`→ Detail:`) resolve to existing sections
+5. Shared Facts (Value Facts + Classification Map) match skeleton
+6. Metadata line present (`> Generated: ...`)
+7. Non-ASCII encoding integrity (CJK, box-drawing chars intact)
+8. 09_STANDARDS anti-patterns reference 11_TODO IDs where applicable
+
+Additionally verify:
+9. 11_TODO includes all items from skeleton's TODO Registry
+10. Quick Start in 00_INDEX (once written) is logically executable
 
 **Classification consistency check**: For every file listed in the skeleton's Classification Map,
 verify that ALL documents mentioning that file use the SAME classification.
 If two documents disagree (e.g., one calls a component "server", another calls it "client"),
 check the actual source file and fix ALL incorrect documents.
+
+**Cross-partition consistency check**: Writers work in partitions (01-04, 05-07, 08-11).
+Cross-partition contradictions (e.g., 03_ARCHITECTURE vs 05_DATA_MODELS describing the same flow differently)
+are NOT caught by reviewers since they review the same partition. You MUST:
+- Scan for overlapping topics across partition boundaries
+- Verify that cross-references between partitions resolve correctly
+- Fix any factual contradictions between documents from different partitions
 
 Fix any structural issues with Edit tool.
 
@@ -485,6 +542,14 @@ SendMessage({
 [ABSOLUTE PATH TO PROJECT ROOT]
 ```
 
+**Timeout & retry policy (review team):**
+- Check progress every 2-3 minutes via TaskList()
+- If a reviewer's task stays `in_progress` for >10 minutes with no file changes, send a status check message
+- If still stuck after another 5 minutes, note the failure and proceed with remaining tasks
+- After all other reviewer tasks complete, attempt the failed task by spawning a replacement reviewer
+- If replacement also fails, the orchestrator performs the review directly as fallback
+- The cross-checker only spawns after all 3 reviewer tasks are `completed`
+
 ### 3-5. Shutdown Review Team
 
 After cross-checker reports:
@@ -495,6 +560,7 @@ SendMessage({ "type": "shutdown_request", "recipient": "reviewer-2", "content": 
 SendMessage({ "type": "shutdown_request", "recipient": "reviewer-3", "content": "All tasks complete" })
 SendMessage({ "type": "shutdown_request", "recipient": "cross-checker", "content": "All tasks complete" })
 
+// Uses current team context — no need to specify name
 TeamDelete()
 ```
 
@@ -519,7 +585,11 @@ Summarize:
 
 ## §DEFAULT-SPEC
 
-If `ai-docs/SPEC.md` does not exist, create it before proceeding. The default SPEC must cover:
+If `ai-docs/SPEC.md` does not exist, create it before proceeding.
+
+**Recommended approach**: If this repository (ai-docs) is available, copy the canonical `SPEC.md` from it. This ensures consistency and completeness.
+
+**Fallback** (if canonical SPEC is not available): Generate a SPEC covering these sections:
 
 1. **§0 Hard Rules**: Evidence-based writing, Evidence sections, output format (UTF-8, Mermaid fences, code blocks), metadata (date + commit hash), cross-reference principle (canonical source priority table), verification checklist (the 8 items below), INDEX last, security (no secrets), section numbering (§N format). The 8-item verification checklist that reviewers and cross-checker must apply to every document:
    1. File exists with correct filename
