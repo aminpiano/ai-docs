@@ -149,6 +149,10 @@ Main Session (Orchestrator)
 
 Facts used identically across all documents. Prevents inter-document contradictions.
 
+##### Value Facts
+
+Scalar values (versions, paths, ports, counts) referenced in 2+ documents.
+
 Include (where applicable):
 - git commit hash
 - Language/runtime version (with derivation source)
@@ -162,6 +166,20 @@ Example format:
 - commit: a1b2c3d
 - Runtime: Node.js >=18.17 (source: framework X requires >=18.17)
 - DB: PostgreSQL 15 (source: docker-compose.yml)
+```
+
+##### Classification Map
+
+A file → classification value table. Covers per-file properties that multiple documents might describe independently (e.g., "use client"/"use server", static/dynamic, internal/public).
+
+The scout populates this by grepping/reading every source file for file-level directives, configuration exports, and module markers. Writers MUST use these classifications verbatim — never re-derive independently.
+
+Example format:
+```
+| File | Classification | Source |
+|------|---------------|--------|
+| src/app/page.tsx | client component | "use client" directive |
+| src/lib/db.ts | server-only | no client imports |
 ```
 
 #### B. Cross-Reference Map
@@ -204,8 +222,22 @@ Example format:
 
 Section composition is determined by project analysis. Include N/A mandatory sections with `(N/A)` marker.
 
+#### E. File-to-Document Map (optional)
+
+Map key source directories/files to the documents that should reference them. This helps writers focus their exploration and reduces redundant codebase scanning. Recommended for large projects.
+
+Example format:
+```
+| Source Path | Primary Document | Secondary |
+|------------|-----------------|-----------|
+| src/routes/ | 06_API | 03_ARCHITECTURE |
+| prisma/schema.prisma | 05_DATA_MODELS | 10_WARNINGS |
+| .env.example | 01_ENVIRONMENT | — |
+```
+
 **Skeleton constraints:**
 - 200 lines or fewer recommended. Minimize per-agent context overhead.
+- The skeleton MUST remain a single file (`ai-docs/.skeleton.md`). Do not split into multiple files — all agents expect this exact path.
 - No body content. Metadata only.
 
 ### §1-3 Phase 1 — Write Team (Parallel, 3-4 Agents)
