@@ -33,9 +33,10 @@ Main Session (Orchestrator)
 Main Session (Orchestrator)
   │
   ├─ Audit Team (parallel → sequential)
-  │    ├─ auditor-1 ──→ audit docs 01-04 vs code
-  │    ├─ auditor-2 ──→ audit docs 05-07 vs code
-  │    ├─ auditor-3 ──→ audit docs 08-11 vs code
+  │    ├─ auditor-1 ──→ audit 07 (business logic, solo)
+  │    ├─ auditor-2 ──→ audit 05-06 (data + API)
+  │    ├─ auditor-3 ──→ audit 01-04, 11 (infra + todo)
+  │    ├─ auditor-4 ──→ audit 08-10 (quality + ops)
   │    └─ synthesizer ──→ skeleton update + manifest + refactoring list
   │    → User reviews refactoring list
   │
@@ -133,7 +134,7 @@ A scout agent explores the entire codebase and produces a **skeleton** — a ~20
 
 When existing docs are present and user selects "Update":
 
-1. **Audit Team** (3 auditors + 1 synthesizer) compares every existing document against actual source code. Identifies both code-driven updates (from git diff) and document-internal issues (stale info, broken cross-refs, SPEC violations). Produces a **refactoring list** for user review.
+1. **Audit Team** (4 auditors + 1 synthesizer) compares every existing document against actual source code. Identifies both code-driven updates (from git diff) and document-internal issues (stale info, broken cross-refs, SPEC violations). Produces a **refactoring list** for user review.
 2. **Update Write Team** (1-3 writers, scaled by affected doc count) surgically edits only the affected documents using Edit tool — no from-scratch rewriting.
 3. **Update Review Team** (1 reviewer + 1 cross-checker) verifies modified docs and checks cross-reference consistency between updated and unchanged documents.
 
@@ -146,7 +147,7 @@ When existing docs are present and user selects "Update":
 | Separate write and review teams | Writers have blind spots; fresh eyes catch more |
 | Cross-checker runs last | Needs final state of all documents |
 | Skeleton limits ~200 lines | Keeps per-agent context overhead minimal |
-| Audit Team (3 auditors) over single scout | Skeleton quality determines overall doc quality — single agent misses too much on large codebases |
+| Audit Team (4 auditors, load-balanced) over single scout | Skeleton quality determines overall doc quality — single agent misses too much on large codebases |
 | Refactoring list shown to user | User controls scope before writers begin |
 | Update uses Edit, not Write | Preserves unchanged content, minimizes diff noise |
 

@@ -69,9 +69,10 @@ Main Session (Orchestrator)
   │    └─ User confirms "Update" mode
   │
   ├─ Step U-1: Audit Team (ai-docs-audit)
-  │    ├─ auditor-1 ──→ audit docs 01-04 vs actual code
-  │    ├─ auditor-2 ──→ audit docs 05-07 vs actual code
-  │    ├─ auditor-3 ──→ audit docs 08-11 vs actual code
+  │    ├─ auditor-1 ──→ audit 07 (business logic, solo — heaviest)
+  │    ├─ auditor-2 ──→ audit 05-06 (data + API)
+  │    ├─ auditor-3 ──→ audit 01-04, 11 (infra + structure + todo)
+  │    ├─ auditor-4 ──→ audit 08-10 (quality + operations)
   │    │   (all auditors done)
   │    ├─ synthesizer ──→ merge reports → skeleton update + manifest
   │    └─ All done → shutdown team
@@ -651,20 +652,34 @@ When user selects "Update" in Step 0, the following pipeline runs.
 
 The Audit Team replaces the single Scout agent. Skeleton quality determines overall documentation quality — a team of parallel auditors ensures thorough coverage even for large codebases.
 
+**Partitioning is load-based, NOT sequential.** Documents vary wildly in evidence file count and source code volume. The default partition below is optimized for a medium-large project (~50k lines). Adjust if your project's document sizes differ significantly.
+
+#### Default Auditor Partition (4 auditors)
+
+| Auditor | Documents | Rationale |
+|---------|-----------|-----------|
+| auditor-1 | **07_BUSINESS_LOGIC** | Heaviest doc (~45 evidence files, ~14k lines of services). Must be solo. |
+| auditor-2 | **05_DATA_MODELS, 06_API** | Data + API layer share schemas. ~11k lines combined. |
+| auditor-3 | **01_ENVIRONMENT, 02_DEPENDENCIES, 03_ARCHITECTURE, 04_STRUCTURE, 11_TODO** | Infrastructure + structure + todos. ~10k lines combined. |
+| auditor-4 | **08_DEBUG, 09_STANDARDS, 10_WARNINGS** | Quality + operations. ~14k lines combined. |
+
+> **Why not 3?** In a project with 50k+ lines, the business logic doc alone can exceed a single agent's context budget. Cramming 05+06+07 into one auditor (~25k source lines) guarantees degraded output.
+
 #### U-1.1 Create Team & Tasks
 
 ```json
 TeamCreate({ "team_name": "ai-docs-audit-{timestamp}", "description": "Audit existing docs vs code changes" })
 
-// Phase A: Parallel auditors
-TaskCreate({ "subject": "Audit docs 01-04", "description": "Audit 01_ENVIRONMENT, 02_DEPENDENCIES, 03_ARCHITECTURE, 04_STRUCTURE against actual code + git diff", "activeForm": "Auditing docs 01-04" })
-TaskCreate({ "subject": "Audit docs 05-07", "description": "Audit 05_DATA_MODELS, 06_API, 07_BUSINESS_LOGIC against actual code + git diff", "activeForm": "Auditing docs 05-07" })
-TaskCreate({ "subject": "Audit docs 08-11", "description": "Audit 08_DEBUG, 09_STANDARDS, 10_WARNINGS, 11_TODO against actual code + git diff", "activeForm": "Auditing docs 08-11" })
+// Phase A: Parallel auditors (4 auditors, load-balanced)
+TaskCreate({ "subject": "Audit 07_BUSINESS_LOGIC", "description": "Audit 07_BUSINESS_LOGIC.md against actual code + git diff. Solo — heaviest document.", "activeForm": "Auditing 07_BUSINESS_LOGIC" })
+TaskCreate({ "subject": "Audit docs 05-06", "description": "Audit 05_DATA_MODELS, 06_API against actual code + git diff", "activeForm": "Auditing docs 05-06" })
+TaskCreate({ "subject": "Audit docs 01-04, 11", "description": "Audit 01_ENVIRONMENT, 02_DEPENDENCIES, 03_ARCHITECTURE, 04_STRUCTURE, 11_TODO against actual code + git diff", "activeForm": "Auditing docs 01-04, 11" })
+TaskCreate({ "subject": "Audit docs 08-10", "description": "Audit 08_DEBUG, 09_STANDARDS, 10_WARNINGS against actual code + git diff", "activeForm": "Auditing docs 08-10" })
 
 // Phase B: Synthesizer (blocked by all auditors)
-TaskCreate({ "subject": "Synthesize audit reports", "description": "Merge 3 audit reports → update skeleton + generate manifest + refactoring list", "activeForm": "Synthesizing audit results" })
+TaskCreate({ "subject": "Synthesize audit reports", "description": "Merge 4 audit reports → update skeleton + generate manifest + refactoring list", "activeForm": "Synthesizing audit results" })
 
-TaskUpdate({ "taskId": "4", "addBlockedBy": ["1", "2", "3"] })
+TaskUpdate({ "taskId": "5", "addBlockedBy": ["1", "2", "3", "4"] })
 ```
 
 #### U-1.2 Assign & Spawn Auditors (parallel)
@@ -673,32 +688,40 @@ TaskUpdate({ "taskId": "4", "addBlockedBy": ["1", "2", "3"] })
 TaskUpdate({ "taskId": "1", "owner": "auditor-1" })
 TaskUpdate({ "taskId": "2", "owner": "auditor-2" })
 TaskUpdate({ "taskId": "3", "owner": "auditor-3" })
-TaskUpdate({ "taskId": "4", "owner": "synthesizer" })
+TaskUpdate({ "taskId": "4", "owner": "auditor-4" })
+TaskUpdate({ "taskId": "5", "owner": "synthesizer" })
 ```
 
-Spawn all 3 auditors in a single message (parallel execution):
+Spawn all 4 auditors in a single message (parallel execution):
 
 ```json
 Task({
   "subagent_type": "general-purpose",
   "team_name": "ai-docs-audit-{timestamp}",
   "name": "auditor-1",
-  "description": "Audit docs 01-04 vs actual code",
-  "prompt": "<Auditor Prompt — assigned: 01, 02, 03, 04>"
+  "description": "Audit 07_BUSINESS_LOGIC vs actual code",
+  "prompt": "<Auditor Prompt — assigned: 07>"
 })
 Task({
   "subagent_type": "general-purpose",
   "team_name": "ai-docs-audit-{timestamp}",
   "name": "auditor-2",
-  "description": "Audit docs 05-07 vs actual code",
-  "prompt": "<Auditor Prompt — assigned: 05, 06, 07>"
+  "description": "Audit docs 05-06 vs actual code",
+  "prompt": "<Auditor Prompt — assigned: 05, 06>"
 })
 Task({
   "subagent_type": "general-purpose",
   "team_name": "ai-docs-audit-{timestamp}",
   "name": "auditor-3",
-  "description": "Audit docs 08-11 vs actual code",
-  "prompt": "<Auditor Prompt — assigned: 08, 09, 10, 11>"
+  "description": "Audit docs 01-04, 11 vs actual code",
+  "prompt": "<Auditor Prompt — assigned: 01, 02, 03, 04, 11>"
+})
+Task({
+  "subagent_type": "general-purpose",
+  "team_name": "ai-docs-audit-{timestamp}",
+  "name": "auditor-4",
+  "description": "Audit docs 08-10 vs actual code",
+  "prompt": "<Auditor Prompt — assigned: 08, 09, 10>"
 })
 ```
 
@@ -721,11 +744,11 @@ and identify everything that needs updating — both from code changes AND doc-i
 3. Your assigned documents (existing ai-docs)
 
 ## Step 2: Your Assigned Documents
-[LIST — e.g.:]
-- ai-docs/01_ENVIRONMENT.md (Task ID: 1)
-- ai-docs/02_DEPENDENCIES.md (Task ID: 1)
-- ai-docs/03_ARCHITECTURE.md (Task ID: 1)
-- ai-docs/04_STRUCTURE.md (Task ID: 1)
+[LIST — examples by auditor:]
+- auditor-1: ai-docs/07_BUSINESS_LOGIC.md (Task ID: 1) — solo, heaviest doc
+- auditor-2: ai-docs/05_DATA_MODELS.md, ai-docs/06_API.md (Task ID: 2)
+- auditor-3: ai-docs/01_ENVIRONMENT.md, 02, 03, 04, 11_TODO.md (Task ID: 3)
+- auditor-4: ai-docs/08_DEBUG.md, 09, 10_WARNINGS.md (Task ID: 4)
 
 ## Step 3: For Each Document
 1. TaskUpdate({ "taskId": "<id>", "status": "in_progress" })
@@ -796,7 +819,7 @@ SendMessage({
 
 #### U-1.3 After Auditors Complete → Spawn Synthesizer
 
-When all 3 auditor tasks are `completed`:
+When all 4 auditor tasks are `completed`:
 
 ```json
 Task({
@@ -813,18 +836,19 @@ Task({
 ```
 You are the synthesizer agent in the "ai-docs-audit" team.
 
-Your job is to merge the 3 auditor reports into a coherent update plan:
+Your job is to merge the 4 auditor reports into a coherent update plan:
 update the skeleton, and generate the update manifest with a refactoring list.
 
 ## Step 1: Read These Files
 1. ai-docs/.audit-report-1.md
 2. ai-docs/.audit-report-2.md
 3. ai-docs/.audit-report-3.md
+4. ai-docs/.audit-report-4.md
 4. ai-docs/.skeleton.md (current)
 5. ai-docs/SPEC.md — §0-2 (for skeleton structure rules)
 
 ## Step 2: Update Skeleton (in-place Edit)
-Based on the 3 audit reports, update ai-docs/.skeleton.md:
+Based on the 4 audit reports, update ai-docs/.skeleton.md:
 - **Shared Facts**: Update Value Facts and Classification Map with corrections from auditors
 - **Cross-Reference Map**: Fix broken references, add new ones
 - **TODO Registry**: Add new items discovered by auditors (use EXTRA-N IDs)
@@ -845,12 +869,12 @@ Write to: ai-docs/.update-manifest.md
 ### Code-Driven Updates
 | Affected Doc | Section | Source File | Issue | Priority |
 |-------------|---------|------------|-------|----------|
-(Merged and deduplicated from all 3 audit reports)
+(Merged and deduplicated from all 4 audit reports)
 
 ### Document-Internal Issues
 | Affected Doc | Section | Issue | Priority |
 |-------------|---------|-------|----------|
-(Merged and deduplicated from all 3 audit reports)
+(Merged and deduplicated from all 4 audit reports)
 
 ### Summary
 - Total affected documents: N / 11
@@ -905,6 +929,7 @@ After synthesizer reports:
 SendMessage({ "type": "shutdown_request", "recipient": "auditor-1", "content": "All tasks complete" })
 SendMessage({ "type": "shutdown_request", "recipient": "auditor-2", "content": "All tasks complete" })
 SendMessage({ "type": "shutdown_request", "recipient": "auditor-3", "content": "All tasks complete" })
+SendMessage({ "type": "shutdown_request", "recipient": "auditor-4", "content": "All tasks complete" })
 SendMessage({ "type": "shutdown_request", "recipient": "synthesizer", "content": "All tasks complete" })
 TeamDelete()
 ```
@@ -1206,6 +1231,7 @@ TeamDelete()
    - `ai-docs/.audit-report-1.md`
    - `ai-docs/.audit-report-2.md`
    - `ai-docs/.audit-report-3.md`
+   - `ai-docs/.audit-report-4.md`
    - `ai-docs/.update-manifest.md`
 2. **Report to user**:
    - Documents updated: [list]
