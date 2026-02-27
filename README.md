@@ -6,6 +6,10 @@ Creates structured docs that enable **any AI** to immediately work on a project 
 
 ## Architecture
 
+Two modes — automatically selected based on whether existing docs are present.
+
+### Full Generation (new projects)
+
 ```
 Main Session (Orchestrator)
   │
@@ -21,6 +25,26 @@ Main Session (Orchestrator)
        ├─ reviewer-2 ──→ deep review 05-07
        ├─ reviewer-3 ──→ deep review 08-11
        └─ cross-checker ──→ verify + 00_INDEX.md
+```
+
+### Update Mode (existing docs)
+
+```
+Main Session (Orchestrator)
+  │
+  ├─ Audit Team (parallel → sequential)
+  │    ├─ auditor-1 ──→ audit docs 01-04 vs code
+  │    ├─ auditor-2 ──→ audit docs 05-07 vs code
+  │    ├─ auditor-3 ──→ audit docs 08-11 vs code
+  │    └─ synthesizer ──→ skeleton update + manifest + refactoring list
+  │    → User reviews refactoring list
+  │
+  ├─ Update Write Team (1-3 writers, scaled by affected docs)
+  │    └─ Edit only affected documents
+  │
+  └─ Update Review Team
+       ├─ reviewer ──→ deep review modified docs
+       └─ cross-checker ──→ cross-ref consistency + INDEX update
 ```
 
 ## Output
@@ -78,10 +102,18 @@ In Claude Code:
 Or natural language:
 
 ```
+# Full generation (new project)
 "Generate AI docs for this project"
 "Create AI documentation"
 "Document this project for AI"
+
+# Update existing docs
+"Update AI docs to reflect recent changes"
+"Sync AI docs with current code"
+"Check which docs need updating"
 ```
+
+When existing docs are detected, the skill asks: **"Full regeneration or Update?"**
 
 ## How It Works
 
@@ -97,6 +129,14 @@ A scout agent explores the entire codebase and produces a **skeleton** — a ~20
 
 3-4 reviewer agents deeply review the drafts (expected ~65-80% completeness), re-reading source code to find gaps and inaccuracies. After all reviewers finish, a cross-checker verifies structural integrity and writes `00_INDEX.md`.
 
+### Update Mode
+
+When existing docs are present and user selects "Update":
+
+1. **Audit Team** (3 auditors + 1 synthesizer) compares every existing document against actual source code. Identifies both code-driven updates (from git diff) and document-internal issues (stale info, broken cross-refs, SPEC violations). Produces a **refactoring list** for user review.
+2. **Update Write Team** (1-3 writers, scaled by affected doc count) surgically edits only the affected documents using Edit tool — no from-scratch rewriting.
+3. **Update Review Team** (1 reviewer + 1 cross-checker) verifies modified docs and checks cross-reference consistency between updated and unchanged documents.
+
 ### Key Design Decisions
 
 | Decision | Reason |
@@ -106,6 +146,9 @@ A scout agent explores the entire codebase and produces a **skeleton** — a ~20
 | Separate write and review teams | Writers have blind spots; fresh eyes catch more |
 | Cross-checker runs last | Needs final state of all documents |
 | Skeleton limits ~200 lines | Keeps per-agent context overhead minimal |
+| Audit Team (3 auditors) over single scout | Skeleton quality determines overall doc quality — single agent misses too much on large codebases |
+| Refactoring list shown to user | User controls scope before writers begin |
+| Update uses Edit, not Write | Preserves unchanged content, minimizes diff noise |
 
 ## Files
 

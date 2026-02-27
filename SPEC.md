@@ -537,8 +537,36 @@ Regenerate documents when any of the following occur:
 - Dependency major version change
 - Major directory structure change
 
-### Regeneration Method
+### Method Selection
 
-- **Full regeneration** is the default. (Partial updates can break cross-reference consistency)
-- On regeneration, execute this spec's full process (Phase 0 → 1 → 2) from scratch.
+| Condition | Method |
+|-----------|--------|
+| No existing ai-docs | Full Generation (only option) |
+| >50% of source files changed | Full Generation (recommended) |
+| Skeleton structure needs major changes (new documents, section renumbering) | Full Generation |
+| <50% of source files changed, localized modifications | **Update Mode** |
+| Document-internal issues only (no code changes) | **Update Mode** |
+
+### Full Generation
+
+- Execute this spec's full process (Phase 0 → 1 → 2) from scratch.
 - Diff against previous documents to verify no unintended information loss.
+
+### Incremental Update (Update Mode)
+
+When changes are localized, use Update Mode instead of full regeneration:
+
+1. **Audit Phase**: Team of parallel auditors compares existing docs vs actual code. Produces:
+   - Per-document audit reports (code-driven updates + doc-internal issues)
+   - Updated skeleton (in-place edit, not regeneration)
+   - Update manifest with refactoring list and per-document edit instructions
+2. **User Confirmation**: Orchestrator presents refactoring list to user before proceeding
+3. **Selective Update**: Writers edit only affected documents using Edit tool (no from-scratch writing)
+4. **Review + Cross-Check**: Reviewer verifies modified docs. Cross-checker verifies consistency between updated and unchanged documents.
+5. **Metadata Update**: Only modified docs get new date + commit hash in metadata line
+
+Update Mode constraints:
+- If >50% of skeleton's File-to-Document Map entries are affected → recommend full regeneration instead
+- Cross-checker MUST verify cross-references between updated AND unchanged documents
+- Temporary files (`.audit-report-*.md`, `.update-manifest.md`) are deleted after completion
+- The skeleton is edited in-place, not regenerated — preserving unaffected mappings

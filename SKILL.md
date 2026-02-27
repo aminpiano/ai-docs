@@ -1,18 +1,22 @@
 ---
 name: ai-project-docs
 description: |
-  Generate AI-optimized project documentation using agent teams for parallel generation.
+  Generate or update AI-optimized project documentation using agent teams.
   Creates structured, token-efficient docs that enable ANY AI to immediately work on the project.
 
-  Uses Claude Code's agent team feature: scout → write team → review team.
+  Two modes:
+  - Full Generation: scout → write team → review team (new projects or major changes)
+  - Update Mode: audit team → update write team → update review team (incremental changes)
+
+  Uses Claude Code's agent team feature.
   Main session acts as lightweight orchestrator — all heavy work delegated to agents via files.
 
-  Use when: (1) Setting up a new project for AI collaboration, (2) User asks to "document this project for AI", (3) Creating architecture docs, (4) Making project AI-readable, (5) "Create AI docs", "generate project map", "make this AI-friendly"
+  Use when: (1) Setting up a new project for AI collaboration, (2) User asks to "document this project for AI", (3) Creating architecture docs, (4) Making project AI-readable, (5) "Create AI docs", "generate project map", "make this AI-friendly", (6) "Update AI docs", "sync docs with code", (7) "Check which docs need updating"
 ---
 
 # AI Project Documentation Generator (Team Edition)
 
-Generate 12 AI-optimized documentation files in `ai-docs/` using agent teams.
+Generate or update 12 AI-optimized documentation files in `ai-docs/` using agent teams.
 
 **Architecture**: Main session is a lightweight orchestrator. All heavy lifting happens in spawned agents. Information flows through files, not the main session's context.
 
@@ -22,10 +26,16 @@ Generate 12 AI-optimized documentation files in `ai-docs/` using agent teams.
 - **Format**: Structured, machine-parseable formats only. No prose paragraphs. Priority: table > bullet list > code block > prose.
 - **No hard line limits**: Write as much as needed for completeness. If a single doc grows unwieldy, split into sub-files with an INDEX.
 
+## Two Modes
+
+### Full Generation Mode
+
+For new projects or major restructuring. Generates all 12 documents from scratch.
+
 ```
 Main Session (Orchestrator)
   │
-  ├─ Step 0: Ensure ai-docs/SPEC.md exists
+  ├─ Step 0: Preflight + Mode Selection
   │
   ├─ Step 1: Spawn scout ──→ writes ai-docs/.skeleton.md
   │
@@ -44,6 +54,42 @@ Main Session (Orchestrator)
   │    └─ All done → shutdown team
   │
   └─ Step 4: Report to user
+```
+
+### Update Mode
+
+For incremental changes. Audits existing docs, identifies what needs updating (including doc-internal issues), and selectively edits affected documents only.
+
+```
+Main Session (Orchestrator)
+  │
+  ├─ Step 0: Preflight + Mode Selection
+  │    ├─ Extract previous commit from metadata
+  │    ├─ git diff → changed files list
+  │    └─ User confirms "Update" mode
+  │
+  ├─ Step U-1: Audit Team (ai-docs-audit)
+  │    ├─ auditor-1 ──→ audit docs 01-04 vs actual code
+  │    ├─ auditor-2 ──→ audit docs 05-07 vs actual code
+  │    ├─ auditor-3 ──→ audit docs 08-11 vs actual code
+  │    │   (all auditors done)
+  │    ├─ synthesizer ──→ merge reports → skeleton update + manifest
+  │    └─ All done → shutdown team
+  │    → Orchestrator presents Refactoring List to user → confirm
+  │
+  ├─ Step U-2: Update Write Team (ai-docs-update)
+  │    ├─ update-writer-1 ──→ Edit affected docs (partition 1)
+  │    ├─ update-writer-2 ──→ Edit affected docs (partition 2)
+  │    ├─ (1-3 writers, scaled by affected doc count)
+  │    └─ All done → shutdown team
+  │
+  ├─ Step U-3: Update Review Team (ai-docs-update-review)
+  │    ├─ update-reviewer ──→ deep review modified docs
+  │    │   (reviewer done)
+  │    ├─ cross-checker ──→ cross-ref consistency + 00_INDEX.md update
+  │    └─ All done → shutdown team
+  │
+  └─ Step U-4: Cleanup + Report
 ```
 
 ---
@@ -89,14 +135,28 @@ TeamDelete()
 
 ---
 
-## Step 0: Preflight Checks
+## Step 0: Preflight Checks + Mode Selection
 
 1. **SPEC exists**: Check if `ai-docs/SPEC.md` exists.
    - If exists: proceed.
    - If not exists: generate it per §DEFAULT-SPEC (end of this document), then proceed.
 2. **Directory setup**: Ensure `ai-docs/` directory exists (`mkdir -p ai-docs`).
-3. **Stale state check**: If `ai-docs/.skeleton.md` already exists, warn the user — this may be from a previous incomplete run. Ask whether to continue from existing state or start fresh (delete and regenerate).
-4. **Existing docs backup**: If any `ai-docs/0*.md` or `ai-docs/1*.md` files exist, inform the user that full regeneration will overwrite them.
+3. **Mode selection**: Check if existing documentation is present.
+   - If `ai-docs/00_INDEX.md` exists AND contains a metadata line (`> Generated: ... | Based on commit: <hash>`):
+     - Ask user: **"Full regeneration or Update?"**
+     - **Full**: proceed to Step 1 (overwrites everything)
+     - **Update**: proceed to Update Mode (Step U-1)
+   - If no existing docs: Full Generation automatically.
+4. **Full Generation preflight** (only when Full mode selected):
+   - **Stale state check**: If `ai-docs/.skeleton.md` already exists, warn the user — this may be from a previous incomplete run. Ask whether to continue from existing state or start fresh (delete and regenerate).
+   - **Existing docs backup**: If any `ai-docs/0*.md` or `ai-docs/1*.md` files exist, inform the user that full regeneration will overwrite them.
+5. **Update Mode preflight** (only when Update mode selected):
+   - Extract previous commit hash from `ai-docs/00_INDEX.md` metadata line.
+   - Run `git diff --name-only <prev_commit>..HEAD` to get changed files list.
+   - Run `git diff --stat <prev_commit>..HEAD` to get change summary.
+   - Read `ai-docs/.skeleton.md` section `## E. File-to-Document Map` for initial impact mapping.
+   - Present to user: changed file count, initial affected document estimate.
+   - Store `PREV_COMMIT`, `CURRENT_COMMIT`, `CHANGED_FILES` for Audit Team.
 
 This is the only step where the main session reads files directly.
 
@@ -575,11 +635,583 @@ Summarize:
 
 ---
 
-## Updating Existing Docs
+## Update Mode
 
-- 1–2 docs affected: update directly, no team needed
-- 3+ docs: run full process (SPEC §6) — write team + review team
-- Always regenerate 00_INDEX.md last
+When user selects "Update" in Step 0, the following pipeline runs.
+
+**Key differences from Full Generation:**
+- No from-scratch writing — all changes are Edit-based on existing documents
+- Audit Team replaces Scout — audits existing docs vs actual code, produces refactoring list
+- Information flows through `.update-manifest.md` (temporary, deleted after completion)
+- Writer/Reviewer count scales dynamically based on affected document count
+
+---
+
+### Step U-1: Audit Team (ai-docs-audit)
+
+The Audit Team replaces the single Scout agent. Skeleton quality determines overall documentation quality — a team of parallel auditors ensures thorough coverage even for large codebases.
+
+#### U-1.1 Create Team & Tasks
+
+```json
+TeamCreate({ "team_name": "ai-docs-audit-{timestamp}", "description": "Audit existing docs vs code changes" })
+
+// Phase A: Parallel auditors
+TaskCreate({ "subject": "Audit docs 01-04", "description": "Audit 01_ENVIRONMENT, 02_DEPENDENCIES, 03_ARCHITECTURE, 04_STRUCTURE against actual code + git diff", "activeForm": "Auditing docs 01-04" })
+TaskCreate({ "subject": "Audit docs 05-07", "description": "Audit 05_DATA_MODELS, 06_API, 07_BUSINESS_LOGIC against actual code + git diff", "activeForm": "Auditing docs 05-07" })
+TaskCreate({ "subject": "Audit docs 08-11", "description": "Audit 08_DEBUG, 09_STANDARDS, 10_WARNINGS, 11_TODO against actual code + git diff", "activeForm": "Auditing docs 08-11" })
+
+// Phase B: Synthesizer (blocked by all auditors)
+TaskCreate({ "subject": "Synthesize audit reports", "description": "Merge 3 audit reports → update skeleton + generate manifest + refactoring list", "activeForm": "Synthesizing audit results" })
+
+TaskUpdate({ "taskId": "4", "addBlockedBy": ["1", "2", "3"] })
+```
+
+#### U-1.2 Assign & Spawn Auditors (parallel)
+
+```json
+TaskUpdate({ "taskId": "1", "owner": "auditor-1" })
+TaskUpdate({ "taskId": "2", "owner": "auditor-2" })
+TaskUpdate({ "taskId": "3", "owner": "auditor-3" })
+TaskUpdate({ "taskId": "4", "owner": "synthesizer" })
+```
+
+Spawn all 3 auditors in a single message (parallel execution):
+
+```json
+Task({
+  "subagent_type": "general-purpose",
+  "team_name": "ai-docs-audit-{timestamp}",
+  "name": "auditor-1",
+  "description": "Audit docs 01-04 vs actual code",
+  "prompt": "<Auditor Prompt — assigned: 01, 02, 03, 04>"
+})
+Task({
+  "subagent_type": "general-purpose",
+  "team_name": "ai-docs-audit-{timestamp}",
+  "name": "auditor-2",
+  "description": "Audit docs 05-07 vs actual code",
+  "prompt": "<Auditor Prompt — assigned: 05, 06, 07>"
+})
+Task({
+  "subagent_type": "general-purpose",
+  "team_name": "ai-docs-audit-{timestamp}",
+  "name": "auditor-3",
+  "description": "Audit docs 08-11 vs actual code",
+  "prompt": "<Auditor Prompt — assigned: 08, 09, 10, 11>"
+})
+```
+
+#### Auditor Prompt Template
+
+```
+You are an auditor agent in the "ai-docs-audit" team.
+
+Your job is to compare existing AI documentation against the ACTUAL source code
+and identify everything that needs updating — both from code changes AND doc-internal issues.
+
+## Context
+- Previous commit: [PREV_COMMIT]
+- Current commit: [CURRENT_COMMIT]
+- Changed files (git diff): [CHANGED_FILES_LIST]
+
+## Step 1: Read These Files
+1. ai-docs/SPEC.md — §0 (Hard Rules), §4 (Common Principles), §5 (your assigned docs)
+2. ai-docs/.skeleton.md — Shared Facts, Cross-Reference Map, TODO Registry
+3. Your assigned documents (existing ai-docs)
+
+## Step 2: Your Assigned Documents
+[LIST — e.g.:]
+- ai-docs/01_ENVIRONMENT.md (Task ID: 1)
+- ai-docs/02_DEPENDENCIES.md (Task ID: 1)
+- ai-docs/03_ARCHITECTURE.md (Task ID: 1)
+- ai-docs/04_STRUCTURE.md (Task ID: 1)
+
+## Step 3: For Each Document
+1. TaskUpdate({ "taskId": "<id>", "status": "in_progress" })
+2. Read the existing document thoroughly
+3. Read ALL source files listed in the document's ## Evidence section
+4. Additionally, explore source files related to git diff changes in your document's domain
+5. Identify discrepancies in two categories:
+
+### A. Code-Driven Updates (from git diff)
+Changes in source code that the document should reflect but currently doesn't:
+- New files/modules/endpoints not documented
+- Modified behavior not reflected in docs
+- Renamed/moved/deleted items still referenced
+- Changed configuration, env vars, dependencies
+
+### B. Document-Internal Issues (independent of git diff)
+Problems in the document itself, even if the code hasn't changed:
+- Stale information (references to files/functions that no longer exist)
+- Broken cross-references (→ Detail: pointing to non-existent sections)
+- SPEC §5 violations (missing mandatory sections, wrong format)
+- Skeleton inconsistencies (Shared Facts, Classification Map mismatches)
+- Incomplete Evidence section (missing source files that were clearly read)
+- Thin sections that lack adequate detail
+- Inaccurate descriptions (code does X but doc says Y)
+
+## Step 4: Write Audit Report
+Write your findings to: ai-docs/.audit-report-N.md (N = your auditor number: 1, 2, or 3)
+
+Report format:
+```markdown
+# Audit Report N — Docs [range]
+> Auditor: auditor-N | Commit range: [PREV]..[CURRENT]
+
+## Per-Document Findings
+
+### [XX_FILENAME.md]
+#### Code-Driven Updates
+| Section | Source File | Issue | Priority |
+|---------|-----------|-------|----------|
+(P0=critical, P1=important, P2=moderate, P3=minor)
+
+#### Document-Internal Issues
+| Section | Issue | Priority |
+|---------|-------|----------|
+
+#### Skeleton Corrections
+- Shared Facts: [corrections needed, or "none"]
+- Cross-Ref Map: [corrections needed, or "none"]
+- TODO Registry: [new items to add, or "none"]
+
+### [next document...]
+(repeat for each assigned document)
+```
+
+## Step 5: Report Completion
+TaskUpdate({ "taskId": "<id>", "status": "completed" })
+
+SendMessage({
+  "type": "message",
+  "recipient": "leader",
+  "content": "Audit complete for docs [range].\n\nSummary: [N] code-driven updates, [M] doc-internal issues found.\nCritical items: [list or 'none']",
+  "summary": "Audit [range] complete"
+})
+
+## Working Directory
+[ABSOLUTE PATH TO PROJECT ROOT]
+```
+
+#### U-1.3 After Auditors Complete → Spawn Synthesizer
+
+When all 3 auditor tasks are `completed`:
+
+```json
+Task({
+  "subagent_type": "general-purpose",
+  "team_name": "ai-docs-audit-{timestamp}",
+  "name": "synthesizer",
+  "description": "Merge audit reports and generate manifest",
+  "prompt": "<Synthesizer Prompt>"
+})
+```
+
+#### Synthesizer Prompt
+
+```
+You are the synthesizer agent in the "ai-docs-audit" team.
+
+Your job is to merge the 3 auditor reports into a coherent update plan:
+update the skeleton, and generate the update manifest with a refactoring list.
+
+## Step 1: Read These Files
+1. ai-docs/.audit-report-1.md
+2. ai-docs/.audit-report-2.md
+3. ai-docs/.audit-report-3.md
+4. ai-docs/.skeleton.md (current)
+5. ai-docs/SPEC.md — §0-2 (for skeleton structure rules)
+
+## Step 2: Update Skeleton (in-place Edit)
+Based on the 3 audit reports, update ai-docs/.skeleton.md:
+- **Shared Facts**: Update Value Facts and Classification Map with corrections from auditors
+- **Cross-Reference Map**: Fix broken references, add new ones
+- **TODO Registry**: Add new items discovered by auditors (use EXTRA-N IDs)
+- **Section Numbering**: Adjust if auditors identified structural changes needed
+- **File-to-Document Map**: Update with new/renamed/deleted files
+
+Use the Edit tool — do NOT rewrite the entire skeleton. Preserve unchanged sections.
+
+## Step 3: Generate Update Manifest
+Write to: ai-docs/.update-manifest.md
+
+```markdown
+# Update Manifest
+> Previous: [PREV_COMMIT] | Current: [CURRENT_COMMIT] | Generated: YYYY-MM-DD
+
+## Refactoring List
+
+### Code-Driven Updates
+| Affected Doc | Section | Source File | Issue | Priority |
+|-------------|---------|------------|-------|----------|
+(Merged and deduplicated from all 3 audit reports)
+
+### Document-Internal Issues
+| Affected Doc | Section | Issue | Priority |
+|-------------|---------|-------|----------|
+(Merged and deduplicated from all 3 audit reports)
+
+### Summary
+- Total affected documents: N / 11
+- Code-driven updates: N items
+- Document-internal issues: N items
+- Critical (P0): N items
+- Documents requiring NO changes: [list]
+
+## Update Instructions (per affected document)
+
+### [XX_FILENAME.md]
+Specific edit instructions for writers:
+- §N-M: [what to change and why]
+- §N-M: [what to change and why]
+- Evidence: [files to add/remove]
+- Metadata: update commit hash to [CURRENT_COMMIT]
+
+### [next document...]
+(repeat for each affected document, ordered by document number)
+
+## Skeleton Changes Applied
+- Shared Facts: [summary of changes]
+- Cross-Ref Map: [summary of changes]
+- TODO Registry: [new items added]
+```
+
+## Step 4: Resolve Conflicts
+If auditor reports contradict each other (e.g., different classification for the same file):
+- Check the actual source file to determine the correct answer
+- Apply the correction to the skeleton
+- Note the resolution in the manifest
+
+## Step 5: Report Completion
+TaskUpdate({ "taskId": "<id>", "status": "completed" })
+
+SendMessage({
+  "type": "message",
+  "recipient": "leader",
+  "content": "Synthesis complete.\n\nAffected docs: [list]\nRefactoring items: [N] code-driven + [M] doc-internal\nSkeleton updated. Manifest written to .update-manifest.md",
+  "summary": "Synthesis complete — N docs affected"
+})
+
+## Working Directory
+[ABSOLUTE PATH TO PROJECT ROOT]
+```
+
+#### U-1.4 Shutdown Audit Team + User Confirmation
+
+After synthesizer reports:
+
+```json
+SendMessage({ "type": "shutdown_request", "recipient": "auditor-1", "content": "All tasks complete" })
+SendMessage({ "type": "shutdown_request", "recipient": "auditor-2", "content": "All tasks complete" })
+SendMessage({ "type": "shutdown_request", "recipient": "auditor-3", "content": "All tasks complete" })
+SendMessage({ "type": "shutdown_request", "recipient": "synthesizer", "content": "All tasks complete" })
+TeamDelete()
+```
+
+**Orchestrator action after Audit Team shutdown:**
+
+1. Read `ai-docs/.update-manifest.md` — specifically the `## Refactoring List` and `## Summary` sections
+2. Present the refactoring list to the user:
+   - Number of affected documents
+   - Code-driven updates (with priorities)
+   - Document-internal issues (with priorities)
+   - Documents requiring no changes
+3. Ask user: **"Proceed with these updates?"**
+   - User may remove items or adjust scope
+   - If user approves: proceed to Step U-2
+   - If user cancels: clean up temp files and stop
+
+---
+
+### Step U-2: Update Write Team (ai-docs-update)
+
+#### Writer Scaling
+
+| Affected Docs | Writers | Assignment |
+|--------------|---------|------------|
+| 1–2 | 1 writer | All docs to writer-1 |
+| 3–5 | 2 writers | Split evenly |
+| 6+ | 3 writers | Split by partition (01-04, 05-07, 08-11) |
+
+#### U-2.1 Create Team & Tasks
+
+```json
+TeamCreate({ "team_name": "ai-docs-update-{timestamp}", "description": "Update affected documents" })
+
+// Create one task per affected document
+TaskCreate({ "subject": "Update XX_FILENAME.md", "description": "Edit per manifest instructions", "activeForm": "Updating XX_FILENAME.md" })
+// ... repeat for each affected document
+```
+
+#### U-2.2 Assign & Spawn Writers
+
+Assign tasks to writers based on scaling rules above. Spawn all writers in parallel.
+
+```json
+Task({
+  "subagent_type": "general-purpose",
+  "team_name": "ai-docs-update-{timestamp}",
+  "name": "update-writer-1",
+  "description": "Update docs [list]",
+  "prompt": "<Update Writer Prompt — assigned: [doc list]>"
+})
+// ... additional writers if needed
+```
+
+#### Update Writer Prompt Template
+
+```
+You are an update writer agent in the "ai-docs-update" team.
+
+Your job is to EDIT existing documentation files based on the update manifest.
+You are NOT writing from scratch — you are surgically modifying existing documents.
+
+## Critical Rules
+1. Use the Edit tool for all changes — NEVER use Write to overwrite entire documents
+2. Preserve all unchanged sections exactly as they are
+3. Follow the manifest's per-document instructions precisely
+4. Update the metadata line (date + commit hash) for every document you modify
+5. Update the ## Evidence section if you reference new source files
+
+## Step 1: Read These Files
+1. ai-docs/SPEC.md — §0 (Hard Rules), §4 (Common Principles), §5 (your assigned docs)
+2. ai-docs/.skeleton.md (already updated by synthesizer)
+3. ai-docs/.update-manifest.md — specifically your assigned documents' instructions
+4. Your assigned existing documents
+
+## Step 2: Your Assigned Documents
+[LIST — e.g.:]
+- ai-docs/03_ARCHITECTURE.md (Task ID: 1)
+- ai-docs/07_BUSINESS_LOGIC.md (Task ID: 2)
+
+## Step 3: For Each Document
+1. TaskUpdate({ "taskId": "<id>", "status": "in_progress" })
+2. Read the manifest's "Update Instructions" for this document
+3. Read the existing document
+4. Read the relevant source files to verify the changes you need to make
+5. Apply each edit instruction:
+   - For content updates: Edit the specific section with corrected information
+   - For new sections: Insert at the correct position per skeleton's Section Numbering
+   - For deleted content: Remove cleanly, no placeholder comments
+   - For cross-ref fixes: Update the reference target
+6. Update metadata line: `> Generated: YYYY-MM-DD | Based on commit: [CURRENT_COMMIT]`
+7. Update ## Evidence section: add any new source files you referenced, remove deleted ones
+8. TaskUpdate({ "taskId": "<id>", "status": "completed" })
+
+## Conflict Escalation
+If a manifest instruction seems wrong after reading the actual source code:
+- Do NOT blindly follow the instruction
+- Check the source code yourself
+- Apply the correct change based on evidence
+- Flag the discrepancy in your completion message
+
+## Step 4: When All Done
+SendMessage({
+  "type": "message",
+  "recipient": "leader",
+  "content": "Updated: [files].\n\nPer-doc summary:\n- XX: [sections modified]\n- YY: [sections modified]\nEscalations: [list or 'none']",
+  "summary": "Update [doc list] complete"
+})
+
+## Working Directory
+[ABSOLUTE PATH TO PROJECT ROOT]
+```
+
+#### U-2.3 Monitor & Shutdown Write Team
+
+**Timeout & retry policy:**
+- Check progress every 2-3 minutes via TaskList()
+- If an agent's task stays `in_progress` for >10 minutes with no file changes, send a status check message
+- If still stuck after another 5 minutes, note the failure and proceed with remaining tasks
+- After all other tasks complete, attempt the failed task by spawning a replacement agent
+- If replacement also fails, the orchestrator writes the document directly as fallback
+
+When all tasks completed:
+
+```json
+SendMessage({ "type": "shutdown_request", "recipient": "update-writer-1", "content": "All tasks complete" })
+// ... for each writer
+TeamDelete()
+```
+
+---
+
+### Step U-3: Update Review Team (ai-docs-update-review)
+
+#### U-3.1 Create Team & Tasks
+
+```json
+TeamCreate({ "team_name": "ai-docs-update-review-{timestamp}", "description": "Review updated documents" })
+
+TaskCreate({ "subject": "Review updated documents", "description": "Deep review all modified docs against source code + manifest", "activeForm": "Reviewing updated docs" })
+TaskCreate({ "subject": "Cross-check consistency", "description": "Verify cross-refs between updated and unchanged docs + update 00_INDEX.md if needed", "activeForm": "Cross-checking consistency" })
+
+// Cross-checker waits for reviewer
+TaskUpdate({ "taskId": "2", "addBlockedBy": ["1"] })
+```
+
+#### U-3.2 Spawn Reviewer
+
+```json
+TaskUpdate({ "taskId": "1", "owner": "update-reviewer" })
+TaskUpdate({ "taskId": "2", "owner": "cross-checker" })
+
+Task({
+  "subagent_type": "general-purpose",
+  "team_name": "ai-docs-update-review-{timestamp}",
+  "name": "update-reviewer",
+  "description": "Review all updated documents",
+  "prompt": "<Update Reviewer Prompt>"
+})
+```
+
+#### Update Reviewer Prompt Template
+
+```
+You are the update reviewer agent in the "ai-docs-update-review" team.
+
+Your job is to deeply review the documents that were just modified by the update writers.
+Verify accuracy against actual source code and ensure manifest instructions were followed correctly.
+
+## Step 1: Read These Files
+1. ai-docs/SPEC.md — §0 (Hard Rules), §4 (Common Principles), §5 (modified docs)
+2. ai-docs/.skeleton.md (updated)
+3. ai-docs/.update-manifest.md — the instructions that writers followed
+
+## Step 2: Modified Documents
+[LIST of all documents modified in Step U-2]
+
+## Step 3: For Each Modified Document
+1. TaskUpdate({ "taskId": "1", "status": "in_progress" })
+2. Read the updated document
+3. Read the manifest instructions for this document
+4. Verify EACH manifest instruction was applied correctly:
+   - Was the change made accurately?
+   - Does it match the actual source code? (read the relevant source files)
+   - Were any instructions missed?
+5. Apply the full review checklist (same as Full Generation reviewers):
+   - [ ] All SPEC §5 mandatory sections present
+   - [ ] Content matches actual source code
+   - [ ] No content gaps
+   - [ ] Cross-references valid
+   - [ ] § numbers match skeleton
+   - [ ] ## Evidence is complete and accurate
+   - [ ] Metadata line updated (new date + commit hash)
+   - [ ] No speculation — only observable facts
+6. Fix any issues using Edit tool
+
+## Step 4: When All Done
+TaskUpdate({ "taskId": "1", "status": "completed" })
+
+SendMessage({
+  "type": "message",
+  "recipient": "leader",
+  "content": "Review complete.\n\nPer-doc summary:\n- XX: [issues found and fixed]\n- YY: [issues found and fixed]\nOverall quality: [assessment]",
+  "summary": "Update review complete"
+})
+
+## Working Directory
+[ABSOLUTE PATH TO PROJECT ROOT]
+```
+
+#### U-3.3 After Reviewer → Spawn Cross-Checker
+
+```json
+Task({
+  "subagent_type": "general-purpose",
+  "team_name": "ai-docs-update-review-{timestamp}",
+  "name": "cross-checker",
+  "description": "Cross-check consistency and update INDEX",
+  "prompt": "<Update Cross-Checker Prompt>"
+})
+```
+
+#### Update Cross-Checker Prompt
+
+```
+You are the cross-checker agent in the "ai-docs-update-review" team.
+
+Your job is to verify consistency between UPDATED and UNCHANGED documents,
+then update 00_INDEX.md if needed.
+
+This is critical: update writers only touched some documents. The unchanged documents
+may now have stale cross-references pointing to updated content, or updated documents
+may reference unchanged sections that no longer align.
+
+## Step 1: Read These Files
+1. ai-docs/SPEC.md — §0-6 (verification checklist) and §3 (INDEX rules)
+2. ai-docs/.skeleton.md (updated)
+3. ai-docs/.update-manifest.md — to know which docs were modified
+
+## Step 2: Cross-Partition Consistency Check
+
+For each UPDATED document:
+1. Find all cross-references TO other documents (→ Detail: XX_FILE.md §N)
+2. Verify the target section exists and the reference is still accurate
+3. Find all UNCHANGED documents that reference the updated document
+4. Verify those references still point to valid, accurate content
+
+For Classification consistency:
+- Check skeleton's Classification Map
+- Verify ALL documents (updated and unchanged) use the same classifications
+
+Fix any issues with Edit tool.
+
+## Step 3: Update 00_INDEX.md (if needed)
+
+Read 00_INDEX.md. Determine if updates are needed:
+- §0-1 Project Identity: update if project metadata changed
+- §0-2 Quick Start: update if environment/setup changed
+- §0-3 Document Map: update if document scope changed
+- §0-4 Critical Warnings Summary: update if warnings changed
+
+If 00_INDEX.md needs changes:
+- Edit specific sections (do NOT rewrite from scratch)
+- Update metadata line (date + commit hash)
+
+If 00_INDEX.md needs NO changes:
+- Still update the metadata commit hash (the docs are now based on a newer commit)
+
+## Step 4: Self-Verify
+Apply the 8-item SPEC §0-6 verification checklist to 00_INDEX.md.
+
+## Step 5: Final Report
+TaskUpdate({ "taskId": "2", "status": "completed" })
+
+SendMessage({
+  "type": "message",
+  "recipient": "leader",
+  "content": "Cross-check complete.\n\nCross-ref issues found: [N]\nClassification conflicts: [N]\nFixes applied: [list or 'none']\n00_INDEX.md: [updated/no changes needed]",
+  "summary": "Cross-check complete"
+})
+
+## Working Directory
+[ABSOLUTE PATH TO PROJECT ROOT]
+```
+
+#### U-3.4 Shutdown Review Team
+
+```json
+SendMessage({ "type": "shutdown_request", "recipient": "update-reviewer", "content": "All tasks complete" })
+SendMessage({ "type": "shutdown_request", "recipient": "cross-checker", "content": "All tasks complete" })
+TeamDelete()
+```
+
+---
+
+### Step U-4: Cleanup + Report
+
+1. **Delete temporary files**:
+   - `ai-docs/.audit-report-1.md`
+   - `ai-docs/.audit-report-2.md`
+   - `ai-docs/.audit-report-3.md`
+   - `ai-docs/.update-manifest.md`
+2. **Report to user**:
+   - Documents updated: [list]
+   - Documents unchanged: [list]
+   - Cross-checker results
+   - Any unresolved issues or escalations
 
 ---
 
@@ -605,6 +1237,6 @@ If `ai-docs/SPEC.md` does not exist, create it before proceeding.
 4. **§3 INDEX Rules**: Project Identity, Quick Start (explicit all steps), Document Map with Common Task Routing (8 default rows), Critical Warnings Summary (3-5 lines with cross-refs). INDEX uses §0-N namespace (§0-1 through §0-4) to avoid collision with 03_ARCHITECTURE's §3-N
 5. **§4 Common Principles**: AI audience, format priority (table > bullet > code > prose), N/A handling, Evidence, empty item consolidation, directory tree exclusions, section numbering compliance, ownership principle
 6. **§5 Per-Document Content**: Detailed requirements for all 11 content documents including ownership restrictions (04, 06), boundary rules (06↔07), TODO Registry compliance (09, 11), priority system (P0-P3 with tiebreaker)
-7. **§6 Update Policy**: Regeneration triggers, full-regeneration default, diff verification
+7. **§6 Update Policy**: Regeneration triggers, method selection (full vs update mode), incremental update constraints, temporary file cleanup
 
 Generate the SPEC as a self-contained, project-agnostic document. Write it to `ai-docs/SPEC.md`.
