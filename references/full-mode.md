@@ -104,6 +104,9 @@ scout reports into the final skeleton file.
        * Rust: #![no_std], #[cfg(feature)], pub mod boundaries
        * Python: __all__, TYPE_CHECKING blocks, abstract base classes
        * Go: //go:build tags, internal/ package boundaries
+   - **Large file detection**: Flag any source file OR ai-docs document exceeding 500 lines.
+     These are refactoring candidates — record file path, line count, and a brief reason
+     why splitting might help (e.g., "3 unrelated services in one file", "mixing config and logic").
    - Explicit TODOs/FIXMEs (Grep sweep for TODO, FIXME, HACK, BUG, WORKAROUND)
    - Implicit issues discovered during analysis
 
@@ -140,6 +143,11 @@ Report format:
 | ID Suggestion | File | Description | Priority |
 |--------------|------|-------------|----------|
 (TODO, FIXME, HACK, BUG, WORKAROUND found in your domain)
+
+## Large Files (Refactoring Candidates)
+| File | Lines | Reason |
+|------|-------|--------|
+(Any source file or ai-docs document exceeding 500 lines. Include line count and brief split rationale.)
 
 ## File-to-Document Map
 | Source Path | Primary Document | Secondary |
@@ -209,6 +217,7 @@ A. **Shared Facts** (two sub-tables required):
 B. **Cross-Reference Map**: Merge cross-references from all reports. Assign canonical vs mention roles per SPEC rules.
 
 C. **TODO Registry**: Merge TODO items from all reports. Assign final IDs (format per SPEC). Deduplicate items found by multiple scouts.
+   - **Large Files**: Merge "Large Files (Refactoring Candidates)" from all reports into the TODO Registry as `implicit-large-*` entries (Priority P2). These will surface in 11_TODO §4 Refactoring Candidates.
 
 D. **Section Numbering Scheme**: Merge section outlines from all reports into a unified numbering scheme for all 11 documents. Ensure no § number collisions.
 
