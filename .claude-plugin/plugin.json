@@ -1,0 +1,8 @@
+{
+  "name": "ai-docs",
+  "version": "1.0.0",
+  "description": "AI-optimized project documentation generator using agent teams. Creates structured docs that enable any AI to work on a project immediately.",
+  "author": {
+    "name": "aminpiano"
+  }
+}

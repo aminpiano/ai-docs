@@ -70,18 +70,16 @@ ai-docs/
 
 ## Installation
 
-### As a Claude Code skill (recommended)
+### As a Claude Code plugin (recommended)
 
 ```bash
-# macOS/Linux
-mkdir -p ~/.claude/skills
-cp SKILL.md ~/.claude/skills/ai-project-docs.skill
-
-# Or package as ZIP first
-cd /path/to/ai-docs
-zip ai-project-docs.skill SKILL.md
-cp ai-project-docs.skill ~/.claude/skills/
+# Clone to the plugins marketplace directory
+mkdir -p ~/.claude/plugins/marketplaces
+cd ~/.claude/plugins/marketplaces
+git clone https://github.com/aminpiano/ai-docs.git
 ```
+
+After installation, restart Claude Code. The `/ai-project-docs` skill will be available.
 
 ### SPEC.md (optional, per-project customization)
 
@@ -151,11 +149,28 @@ When existing docs are present and user selects "Update":
 | Refactoring list shown to user | User controls scope before writers begin |
 | Update uses Edit, not Write | Preserves unchanged content, minimizes diff noise |
 
-## Files
+## Structure
+
+```
+ai-docs/
+├── .claude-plugin/
+│   └── plugin.json                   # Plugin metadata
+├── skills/
+│   └── ai-project-docs/
+│       ├── SKILL.md                  # Orchestration logic, agent prompts
+│       └── references/
+│           ├── full-mode.md          # Full generation pipeline
+│           ├── update-mode.md        # Update mode pipeline
+│           └── default-spec.md       # SPEC auto-generation guide
+├── SPEC.md                           # Generation specification (copy to project)
+├── README.md
+└── LICENSE
+```
 
 | File | Purpose |
 |------|---------|
-| `SKILL.md` | Claude Code skill — orchestration logic, agent prompts, tool API reference |
+| `skills/ai-project-docs/SKILL.md` | Claude Code skill — orchestration logic, agent prompts, tool API reference |
+| `skills/ai-project-docs/references/` | Pipeline instructions for each mode |
 | `SPEC.md` | Generation specification — hard rules, document requirements, verification checklist |
 
 ## License
