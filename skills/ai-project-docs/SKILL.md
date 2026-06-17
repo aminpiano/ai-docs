@@ -118,9 +118,9 @@ All tools below are **Claude Code built-in tools** — no custom API. Just call 
 
 ## Step 0: Preflight Checks + Mode Selection
 
-1. **SPEC exists**: Check if `ai-docs/SPEC.md` exists.
-   - If exists: proceed.
+1. **SPEC exists + version match**: Check if `ai-docs/SPEC.md` exists.
    - If not exists: Read `references/default-spec.md` and generate SPEC per its instructions, then proceed.
+   - If exists: verify it matches the active workflow. If the SPEC still describes a fixed **"Write Team (Parallel, 3-4 Agents)"** partition (a pre-v1.5 SPEC) while you are running v1.5, it is **stale** — regenerate it from `references/default-spec.md` (or warn the user and replace) before proceeding. Carrying over a prior project's SPEC for same-basis comparison is fine *during* generation, but the **final** SPEC must match the workflow that produced the docs (a v1.5 doc set left with a 3-4-agent SPEC is internally inconsistent).
 2. **Directory setup**: Ensure `ai-docs/` directory exists (`mkdir -p ai-docs`).
 3. **Mode selection**: Check if existing documentation is present.
    - If `ai-docs/00_INDEX.md` exists AND contains a metadata line (`> Generated: ... | Based on commit: <hash>`):
@@ -131,6 +131,7 @@ All tools below are **Claude Code built-in tools** — no custom API. Just call 
 4. **Full Generation preflight** (only when Full mode selected):
    - **Stale state check**: If `ai-docs/.skeleton.md` already exists, warn the user — this may be from a previous incomplete run. Ask whether to continue from existing state or start fresh (delete and regenerate).
    - **Existing docs backup**: If any `ai-docs/0*.md` or `ai-docs/1*.md` files exist, inform the user that full regeneration will overwrite them.
+   - **Non-standard doc preservation**: Full regen emits ONLY the 12 standard docs (00–11) + SPEC + skeleton. If the existing `ai-docs/` (or its backup) holds project-custom docs (e.g. `QUERY_GUIDE.md`) that other files reference (`CLAUDE.md`, `AGENTS.md`, etc.), **carry them over to the new `ai-docs/` and verify those references don't break** — the 12-doc set does not cover them.
 5. **Update Mode preflight** (only when Update mode selected):
    - Extract previous commit hash from `ai-docs/00_INDEX.md` metadata line.
    - Run `git diff --name-only <prev_commit>..HEAD` to get changed files list.

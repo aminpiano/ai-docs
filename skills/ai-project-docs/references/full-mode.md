@@ -409,6 +409,7 @@ You are a documentation writer agent in the "ai-docs-gen" team.
 ## Step 1: Read These Files
 1. ai-docs/SPEC.md — §0 (Hard Rules), §4 (Common Principles), §5 (your assigned docs only)
 2. ai-docs/.skeleton.md — Shared Facts, Cross-Reference Map, TODO Registry, Section Numbering, Workload Matrix, Agent Assignment Plan
+3. **Prior art (if regenerating)**: if a backup of the previous docs exists (e.g. `ai-docs-old/`), read your assigned doc's prior version — build on verified facts, don't blindly rewrite. **Especially for 11_TODO**: the prior `11_TODO.md` may list code-valid P0/P1 items that are absent from the skeleton TODO Registry (they have no explicit `# TODO` comment and aren't in MEMORY, so scouts won't surface them). Cross-check each prior TODO against current source and carry forward any still-valid item. A regenerated TODO that silently drops a live P0 (e.g. a financial-precision `float()` on a money path) is a critical miss.
 
 ## Step 2: Your Assigned Outputs
 [COPY THE EXACT ROW FROM ## G. Agent Assignment Plan]
