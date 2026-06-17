@@ -2,6 +2,8 @@
 
 > Universal specification for generating `/ai-docs/` project documentation (12 files) using an AI agent team.
 > Not tied to any specific project. Applicable to any repository.
+>
+> Status: v1.5 SPEC. v1.5 preserves the v1 12-file output, but replaces fixed writer/reviewer partitioning with workload-based agent allocation. v2/v3/v4 are archived experiments and are not active generation targets.
 
 ---
 
@@ -115,33 +117,35 @@ Numbers are **pre-assigned in the Phase 0 skeleton**. Phase 1 agents must follow
 | Fully sequential (1 agent writes 12) | Later docs must read all prior docs → context explosion |
 | Write only (no review) | Initial drafts are ~65-80% complete. Gaps, inaccuracies, missing items remain |
 | Single verifier for all docs | Medium+ projects: 11 docs exceed single agent context window |
-| **Scout → Write Team → Review Team** | Skeleton ensures consistency, parallel writing for speed, parallel review for quality |
+| Fixed 3-writer partition | Heavy documents such as API, data model, or business logic get bundled with unrelated docs → quality loss |
+| **Scout → Workload Plan → Write Team → Review Team** | Skeleton ensures consistency, workload plan sizes the agent team, parallel writing/review preserves quality |
 
 **Architecture**: Main session is a lightweight orchestrator. All code reading, writing, and verification happens in spawned agents. Information flows through files (`SPEC.md`, `.skeleton.md`, doc files), not through the main session's context.
 
 ```
 Main Session (Orchestrator)
   │
-  ├─ Phase 0: Scout agent ──→ ai-docs/.skeleton.md
+  ├─ Phase 0: Scout team + synthesizer ──→ ai-docs/.skeleton.md
+  │     (shared facts + workload matrix + agent assignment plan)
   │
-  ├─ Phase 1: Write Team (parallel)
-  │    ├─ writer-1 ──→ docs 01-04
-  │    ├─ writer-2 ──→ docs 05-07
-  │    └─ writer-3 ──→ docs 08-11
+  ├─ Phase 1: Write Team (parallel, workload-based)
+  │    ├─ light docs may be bundled
+  │    ├─ heavy docs may be split into section packets
+  │    └─ each split doc has one doc owner/integrator
   │
-  └─ Phase 2: Review Team (parallel → sequential)
-       ├─ reviewer-1 ──→ deep review 01-04 ─┐
-       ├─ reviewer-2 ──→ deep review 05-07 ─┤ (parallel)
-       ├─ reviewer-3 ──→ deep review 08-11 ─┘
+  └─ Phase 2: Review Team (parallel, workload-based → sequential)
+       ├─ targeted reviewers follow the skeleton's assignment plan
        │   (all reviewers done)
        └─ cross-checker ──→ structural verify + 00_INDEX.md (sequential)
 ```
 
-### §1-2 Phase 0 — Skeleton Generation (Scout Agent)
+### §1-2 Phase 0 — Skeleton Generation (Scout Team + Synthesizer)
 
 **Input**: entire repository root
 
 **Output**: `ai-docs/.skeleton.md` (file on disk — agents read it directly, not passed via prompt)
+
+The skeleton is not only a shared-facts file. It is also the routing plan for the rest of the run. It must measure repository size and complexity before assigning writers or reviewers.
 
 **Skeleton required sections:**
 
@@ -222,9 +226,9 @@ Example format:
 
 Section composition is determined by project analysis. Include N/A mandatory sections with `(N/A)` marker.
 
-#### E. File-to-Document Map (optional)
+#### E. File-to-Document Map
 
-Map key source directories/files to the documents that should reference them. This helps writers focus their exploration and reduces redundant codebase scanning. Recommended for large projects.
+Map key source directories/files to the documents that should reference them. This helps writers focus their exploration and reduces redundant codebase scanning.
 
 Example format:
 ```
@@ -235,21 +239,88 @@ Example format:
 | .env.example | 01_ENVIRONMENT | — |
 ```
 
+#### F. Workload Matrix
+
+Measure the source scope for each target document before assigning agents.
+
+Required columns:
+
+| Doc | Primary Scope | Source Files | Source LOC | Key Units | Risk | Workload | Suggested Handling |
+|-----|---------------|--------------|------------|-----------|------|----------|--------------------|
+| 06_API.md | routes + schemas + auth deps | 42 | 8,900 | endpoints=118 | high | heavy | split by endpoint group + owner |
+
+Column rules:
+- `Source Files`: count relevant source/config files, not generated output.
+- `Source LOC`: approximate line count for the relevant scope. Exactness is less important than relative load.
+- `Key Units`: domain-specific count where applicable, such as endpoints, DB tables, migrations, env vars, commands, services, scheduled jobs, tests, or large files.
+- `Risk`: `low | medium | high | critical`. Use `critical` for money movement, auth/security, production deploy, destructive DB migrations, scheduler/cron, external API side effects, or data integrity.
+- `Workload`: `light | medium | heavy | critical`.
+- `Suggested Handling`: one of:
+  - `bundle`: can share an agent with other light docs
+  - `single-doc`: one dedicated writer/reviewer
+  - `split-sections`: multiple section writers plus one doc owner/integrator
+  - `split-domain`: multiple domain writers plus one doc owner/integrator
+
+Workload guideline:
+
+| Workload | Typical Signal | Writer Handling | Reviewer Handling |
+|----------|----------------|-----------------|-------------------|
+| light | <=10 source files, <=1k LOC, low risk | bundle with related light docs | bundle |
+| medium | <=30 files or <=4k LOC, medium risk | dedicated single-doc writer or small bundle | dedicated or small bundle |
+| heavy | >30 files, >4k LOC, or many key units | split into section packets + doc owner | targeted reviewers |
+| critical | money/auth/DB/scheduler/external side effects with broad scope | split by domain + doc owner | independent domain reviewers plus owner review |
+
+#### G. Agent Assignment Plan
+
+The synthesizer must convert the Workload Matrix into an explicit agent plan. The orchestrator follows this plan unless it is obviously invalid.
+
+Required format:
+
+```markdown
+## G. Agent Assignment Plan
+
+### Write Team
+| Agent | Role | Outputs | Source Scope | Blocked By |
+|-------|------|---------|--------------|------------|
+| writer-env-deps | bundled writer | 01_ENVIRONMENT.md, 02_DEPENDENCIES.md | env/config/package files | skeleton |
+| writer-api-auth | section writer | .fragments/06-api-auth.md | auth routes + auth deps | skeleton |
+| writer-api-bots | section writer | .fragments/06-api-bots.md | bot/deal/chart routes + schemas | skeleton |
+| owner-api | doc owner/integrator | 06_API.md | all 06 fragments + source spot checks | writer-api-* |
+
+### Review Team
+| Agent | Role | Reviews | Source Scope | Blocked By |
+|-------|------|---------|--------------|------------|
+| reviewer-api-contracts | targeted reviewer | 06_API.md endpoint contracts | all routes + schemas | owner-api |
+| reviewer-data-final-state | targeted reviewer | 05_DATA_MODELS.md | models + migrations final state | owner-data |
+| cross-checker | structural checker | all docs + 00_INDEX.md | docs only, plus 01/02/10 for INDEX | all reviewers |
+```
+
+Planning rules:
+- The 12 documents are the output structure. They are not the agent partition.
+- Do not assign more than 2 medium/heavy documents to one writer.
+- Do not bundle `05_DATA_MODELS.md`, `06_API.md`, or `07_BUSINESS_LOGIC.md` with each other unless the Workload Matrix marks them `light`.
+- If a document is `heavy` or `critical`, split it into fragments and create one doc owner/integrator for the final document.
+- Review assignment must mirror actual risk, not writer assignment. A doc with many endpoints/tables/jobs gets targeted reviewers even if one writer produced it.
+- Keep total agents proportional to the project. Small repos can use 2-3 writers and 1 reviewer; large/high-risk repos can use 6-10 writers/reviewers.
+
 **Skeleton constraints:**
-- 200 lines or fewer recommended. Minimize per-agent context overhead.
+- 260 lines or fewer recommended. Minimize per-agent context overhead while preserving the workload matrix and assignment plan.
 - The skeleton MUST remain a single file (`ai-docs/.skeleton.md`). Do not split into multiple files — all agents expect this exact path.
 - No body content. Metadata only.
 
-### §1-3 Phase 1 — Write Team (Parallel, 3-4 Agents)
+### §1-3 Phase 1 — Write Team (Parallel, Workload-Based)
 
-A dedicated team of writer agents generates 11 documents in parallel.
+A dedicated team of writer agents generates 11 documents in parallel. The team shape comes from `ai-docs/.skeleton.md` section `## G. Agent Assignment Plan`, not from a fixed 3-writer partition.
 
 **Each agent reads from disk (NOT passed via prompt):**
 1. `ai-docs/SPEC.md` — §0, §4, §5 (their assigned docs only)
 2. `ai-docs/.skeleton.md` — full skeleton
 3. Source code/config files needed for their documents (identified from skeleton + own exploration)
 
-**Each agent's output:** 2-4 `/ai-docs/XX_FILE.md` files
+**Each agent's output:** one of:
+- Final `/ai-docs/XX_FILE.md` files for light/medium docs
+- Fragment files under `ai-docs/.fragments/` for split heavy/critical docs
+- Integrated final `/ai-docs/XX_FILE.md` files for doc owner/integrator agents
 
 Write team is shut down after all documents are generated.
 
@@ -261,6 +332,9 @@ Write team is shut down after all documents are generated.
   - Your document is mention for an issue → one-line summary + `→ Detail: XX_FILE.md §N`
 - Follow the Section Numbering Scheme for `§` numbers.
 - Use TODO Registry IDs for cross-references. (e.g., `→ 11_TODO #implicit-no-auth`)
+- Follow the Agent Assignment Plan. Do not independently rebundle documents.
+- Fragment writers write only their assigned fragment and evidence list. They do not create the final document.
+- Doc owners/integrators merge fragments into the final document, remove duplication, normalize style, complete cross-references, and verify the final Evidence section.
 
 **11_TODO.md agent additional rules:**
 - Include ALL items from the TODO Registry without omission.
@@ -274,9 +348,17 @@ Write team is shut down after all documents are generated.
 A dedicated review team improves document quality and ensures structural integrity.
 Initial drafts from Phase 1 are expected to be ~65-80% complete.
 
-#### Phase 2a — Parallel Deep Review (3-4 Reviewer Agents)
+#### Phase 2a — Parallel Deep Review (Workload-Based Reviewer Agents)
 
-Each reviewer agent handles 2-4 documents:
+Each reviewer agent follows the Review Team plan in `ai-docs/.skeleton.md` section `## G. Agent Assignment Plan`.
+
+Small docs may be bundled. Heavy or critical docs get targeted reviewers by domain, such as:
+- API contract coverage
+- DB/model/migration final state
+- business logic/runtime flow
+- auth/security/money movement
+- scheduler/cron/external side effects
+- tests/debug/ops coverage
 
 **Each reviewer:**
 1. Reads `ai-docs/SPEC.md` and `ai-docs/.skeleton.md` from disk
@@ -295,6 +377,7 @@ Each reviewer agent handles 2-4 documents:
    - Corrects inaccuracies
    - Expands thin sections
    - Completes evidence lists
+7. For heavy/critical docs, validates coverage against the Workload Matrix key units (every endpoint, table, migration, scheduled job, service, or other counted unit relevant to that document).
 
 **Goal:** bring each document from ~65-80% to ~95%+ completeness.
 

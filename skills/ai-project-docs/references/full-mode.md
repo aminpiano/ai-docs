@@ -2,7 +2,11 @@
 
 Parallel scout team explores the codebase by domain partition, then a synthesizer merges findings into the skeleton. Main session does NOT read source code.
 
-**Partitioning is load-based, NOT sequential.** Documents vary wildly in source code volume. The default partition below is optimized for a medium-large project (~50k lines). Adjust if your project's domain sizes differ significantly.
+**Partitioning is load-based, NOT sequential.** Documents vary wildly in source code volume. The default partition below is only a bootstrap partition for scouting. The synthesizer must use scout workload signals to size the later writer and reviewer teams. Do not carry the 4-scout partition forward as the writer/reviewer partition.
+
+The scout phase must answer two questions:
+1. What shared facts should all documents use?
+2. How much writer/reviewer capacity does each final document need?
 
 #### Default Scout Partition (4 scouts)
 
@@ -107,6 +111,9 @@ scout reports into the final skeleton file.
    - **Large file detection**: Flag any source file OR ai-docs document exceeding 500 lines.
      These are refactoring candidates — record file path, line count, and a brief reason
      why splitting might help (e.g., "3 unrelated services in one file", "mixing config and logic").
+   - **Workload measurement**: Count relevant files, approximate LOC, and key units for your domain.
+     Key units are ecosystem-specific: endpoints, tables, migrations, env vars, commands, services,
+     scheduled jobs, tests, CLI commands, UI route groups, external integrations, etc.
    - Explicit TODOs/FIXMEs (Grep sweep for TODO, FIXME, HACK, BUG, WORKAROUND)
    - Implicit issues discovered during analysis
 
@@ -148,6 +155,11 @@ Report format:
 | File | Lines | Reason |
 |------|-------|--------|
 (Any source file or ai-docs document exceeding 500 lines. Include line count and brief split rationale.)
+
+## Workload Signals
+| Target Doc | Source Files | Source LOC | Key Units | Risk Notes | Suggested Handling |
+|------------|--------------|------------|-----------|------------|--------------------|
+(Example: 06_API | 42 | 8900 | endpoints=118, auth layers=3 | high: auth + external webhooks | split by endpoint group + owner)
 
 ## File-to-Document Map
 | Source Path | Primary Document | Secondary |
@@ -203,7 +215,7 @@ that will guide parallel document writers.
 2. ai-docs/.scout-report-2.md
 3. ai-docs/.scout-report-3.md
 4. ai-docs/.scout-report-4.md
-5. ai-docs/SPEC.md — §0-2 (for skeleton structure rules)
+5. ai-docs/SPEC.md — §0-2 (for skeleton structure rules, including Workload Matrix and Agent Assignment Plan)
 
 ## Step 2: Generate Skeleton
 Write to: ai-docs/.skeleton.md
@@ -223,6 +235,15 @@ D. **Section Numbering Scheme**: Merge section outlines from all reports into a 
 
 E. **File-to-Document Map**: Merge from all reports. Resolve any file claimed by multiple documents (assign primary vs secondary).
 
+F. **Workload Matrix**: Merge "Workload Signals" from all reports into a single per-document matrix. Count relative source volume and risk. This is the basis for writer/reviewer sizing.
+
+G. **Agent Assignment Plan**: Create explicit Write Team and Review Team tables from the Workload Matrix. This plan replaces the old fixed writer-1/writer-2/writer-3 partition.
+   - Bundle only light related docs.
+   - Give medium docs a dedicated writer when practical.
+   - Split heavy/critical docs into fragments and assign one doc owner/integrator.
+   - Assign reviewers by risk and coverage need, not by writer grouping.
+   - Ensure the cross-checker is blocked by all reviewers.
+
 ## Step 3: Resolve Conflicts
 If scout reports contradict each other (e.g., different classification for the same file, different version numbers):
 - Check the actual source file to determine the correct answer
@@ -232,9 +253,12 @@ If scout reports contradict each other (e.g., different classification for the s
 ## Step 4: Quality Check
 Before finalizing, verify:
 - Every document (01-11) has at least one section in the Section Numbering Scheme
+- Every document (01-11) has exactly one final writer/owner in the Agent Assignment Plan
+- Heavy/critical documents have split handling or an explicit rationale for a single dedicated writer
+- Review Team assignments cover all heavy/critical Workload Matrix key units
 - Classification Map has no duplicates or contradictions
 - Cross-Reference Map is symmetric (if A→B canonical, B→A is mention)
-- Skeleton remains a single file. If approaching 200 lines, compress (shorter descriptions, merge similar items)
+- Skeleton remains a single file. If approaching 260 lines, compress (shorter descriptions, merge similar items)
 
 ## Step 5: Report Completion
 TaskUpdate({ "taskId": "<id>", "status": "completed" })
@@ -242,7 +266,7 @@ TaskUpdate({ "taskId": "<id>", "status": "completed" })
 SendMessage({
   "type": "message",
   "recipient": "leader",
-  "content": "Skeleton synthesized.\n\nValue facts: [N]\nClassifications: [N]\nCross-refs: [N]\nTODO items: [N]\nConflicts resolved: [N or 'none']",
+  "content": "Skeleton synthesized.\n\nValue facts: [N]\nClassifications: [N]\nCross-refs: [N]\nTODO items: [N]\nWorkload: [light/medium/heavy/critical counts]\nWrite agents planned: [N]\nReview agents planned: [N]\nConflicts resolved: [N or 'none']",
   "summary": "Skeleton synthesis complete"
 })
 
@@ -276,81 +300,104 @@ TeamDelete()
    - `## B. Cross-Reference Map` exists
    - `## C. TODO Registry` exists
    - `## D. Section Numbering Scheme` exists
+   - `## E. File-to-Document Map` exists
+   - `## F. Workload Matrix` exists
+   - `## G. Agent Assignment Plan` exists
    If any section is missing, flag it and consider re-running the synthesizer.
 3. Do NOT read skeleton body content — keep orchestrator context lightweight.
 
 ---
 
-## Step 2: Write Team (ai-docs-gen)
+## Step 2: Write Team (ai-docs-gen, Workload-Based)
 
-### 2-1. Create Team & Tasks
+### 2-1. Read Skeleton Assignment Plan
+
+Before creating writer tasks, the orchestrator reads only these sections of `ai-docs/.skeleton.md`:
+
+- `## F. Workload Matrix`
+- `## G. Agent Assignment Plan`
+
+Do not read the whole skeleton body into the main session. The writer agents read it from disk.
+
+The 12 documents are the output contract. They are not the agent partition. Light docs may be bundled; heavy/critical docs may be split into fragments with a doc owner/integrator.
+
+### 2-2. Validate Assignment Plan
+
+Before spawning writers, apply these checks:
+
+- Every final document `01_ENVIRONMENT.md` through `11_TODO.md` has exactly one final writer/owner responsible for producing the final file.
+- Every fragment output under `ai-docs/.fragments/` has a corresponding doc owner/integrator.
+- `05_DATA_MODELS.md`, `06_API.md`, and `07_BUSINESS_LOGIC.md` are not bundled together unless the Workload Matrix marks them `light`.
+- Any document marked `heavy` or `critical` has either:
+  - one dedicated single-doc writer and one targeted reviewer, or
+  - multiple fragment writers plus one doc owner/integrator.
+- Agent count is plausible:
+  - small repo: 2-3 writers
+  - medium repo: 3-5 writers
+  - large/high-risk repo: 6-10 writer/owner agents
+
+If the plan fails these checks, spawn a short "assignment-fixer" agent to edit only `## G. Agent Assignment Plan`, then re-check. Do not proceed with a broken plan.
+
+### 2-3. Create Team & Tasks Dynamically
+
+Generate one task per row in the skeleton's Write Team plan.
 
 ```json
 // Generate unique team name to prevent collision with stale teams from crashed runs
 // Format: ai-docs-gen-{YYYYMMDD-HHmmss} (e.g., ai-docs-gen-20260220-143022)
-TeamCreate({ "team_name": "ai-docs-gen-{timestamp}", "description": "AI docs parallel writing" })
+TeamCreate({ "team_name": "ai-docs-gen-{timestamp}", "description": "AI docs workload-based parallel writing" })
 
-TaskCreate({ "subject": "Generate 01_ENVIRONMENT.md", "description": "Write ai-docs/01_ENVIRONMENT.md per SPEC and skeleton", "activeForm": "Writing 01_ENVIRONMENT.md" })
-TaskCreate({ "subject": "Generate 02_DEPENDENCIES.md", "description": "Write ai-docs/02_DEPENDENCIES.md per SPEC and skeleton", "activeForm": "Writing 02_DEPENDENCIES.md" })
-TaskCreate({ "subject": "Generate 03_ARCHITECTURE.md", "description": "Write ai-docs/03_ARCHITECTURE.md per SPEC and skeleton", "activeForm": "Writing 03_ARCHITECTURE.md" })
-TaskCreate({ "subject": "Generate 04_STRUCTURE.md", "description": "Write ai-docs/04_STRUCTURE.md per SPEC and skeleton", "activeForm": "Writing 04_STRUCTURE.md" })
-TaskCreate({ "subject": "Generate 05_DATA_MODELS.md", "description": "Write ai-docs/05_DATA_MODELS.md per SPEC and skeleton", "activeForm": "Writing 05_DATA_MODELS.md" })
-TaskCreate({ "subject": "Generate 06_API.md", "description": "Write ai-docs/06_API.md per SPEC and skeleton", "activeForm": "Writing 06_API.md" })
-TaskCreate({ "subject": "Generate 07_BUSINESS_LOGIC.md", "description": "Write ai-docs/07_BUSINESS_LOGIC.md per SPEC and skeleton", "activeForm": "Writing 07_BUSINESS_LOGIC.md" })
-TaskCreate({ "subject": "Generate 08_DEBUG.md", "description": "Write ai-docs/08_DEBUG.md per SPEC and skeleton", "activeForm": "Writing 08_DEBUG.md" })
-TaskCreate({ "subject": "Generate 09_STANDARDS.md", "description": "Write ai-docs/09_STANDARDS.md per SPEC and skeleton", "activeForm": "Writing 09_STANDARDS.md" })
-TaskCreate({ "subject": "Generate 10_WARNINGS.md", "description": "Write ai-docs/10_WARNINGS.md per SPEC and skeleton", "activeForm": "Writing 10_WARNINGS.md" })
-TaskCreate({ "subject": "Generate 11_TODO.md", "description": "Write ai-docs/11_TODO.md per SPEC and skeleton", "activeForm": "Writing 11_TODO.md" })
+TaskCreate({ "subject": "writer-env-deps", "description": "Write 01_ENVIRONMENT.md and 02_DEPENDENCIES.md per skeleton assignment", "activeForm": "Writing env/deps docs" })
+TaskCreate({ "subject": "writer-api-auth", "description": "Write ai-docs/.fragments/06-api-auth.md per skeleton assignment", "activeForm": "Writing API auth fragment" })
+TaskCreate({ "subject": "owner-api", "description": "Integrate 06_API.md from API fragments", "activeForm": "Integrating 06_API.md" })
 ```
 
-### 2-2. Assign Tasks
+The example above is illustrative only. Use the actual `## G. Agent Assignment Plan` rows.
 
-> **Note**: Task IDs shown below (1-11) assume sequential creation within a fresh team.
-> If the Team API assigns different IDs, use the actual IDs returned by TaskCreate.
-> The orchestrator should track the mapping: document name → taskId.
+### 2-4. Assign Dependencies
+
+Use the `Blocked By` column in the Write Team plan:
+
+- Fragment writers are blocked only by the skeleton.
+- Bundled/single-doc writers are blocked only by the skeleton.
+- Doc owner/integrator tasks are blocked by all fragment writers for that document.
+- A doc owner may do source spot checks, but must not redo all fragment work unless the fragment is clearly wrong.
 
 ```json
-// doc-writer-1: Infrastructure (01-04)
-TaskUpdate({ "taskId": "1", "owner": "doc-writer-1" })
-TaskUpdate({ "taskId": "2", "owner": "doc-writer-1" })
-TaskUpdate({ "taskId": "3", "owner": "doc-writer-1" })
-TaskUpdate({ "taskId": "4", "owner": "doc-writer-1" })
-
-// doc-writer-2: Data & API (05-07)
-TaskUpdate({ "taskId": "5", "owner": "doc-writer-2" })
-TaskUpdate({ "taskId": "6", "owner": "doc-writer-2" })
-TaskUpdate({ "taskId": "7", "owner": "doc-writer-2" })
-
-// doc-writer-3: Quality & maintenance (08-11)
-TaskUpdate({ "taskId": "8", "owner": "doc-writer-3" })
-TaskUpdate({ "taskId": "9", "owner": "doc-writer-3" })
-TaskUpdate({ "taskId": "10", "owner": "doc-writer-3" })
-TaskUpdate({ "taskId": "11", "owner": "doc-writer-3" })
+TaskUpdate({ "taskId": "<owner-api-task>", "addBlockedBy": ["<writer-api-auth-task>", "<writer-api-bots-task>"] })
+TaskUpdate({ "taskId": "<task-id>", "owner": "<agent-name-from-plan>" })
 ```
 
-### 2-3. Spawn Writers (parallel, single message)
+### 2-5. Spawn Writers (parallel, by dependency wave)
+
+Spawn all unblocked writer agents in one message. After a wave completes, spawn newly unblocked doc owners/integrators.
 
 ```json
 Agent({
   "subagent_type": "general-purpose",
   "team_name": "ai-docs-gen",
-  "name": "doc-writer-1",
-  "description": "Write docs 01-04",
-  "prompt": "<Writer Prompt — assigned: 01, 02, 03, 04>"
+  "name": "writer-env-deps",
+  "description": "Write 01_ENVIRONMENT.md and 02_DEPENDENCIES.md",
+  "prompt": "<Writer Prompt — assigned from skeleton plan>"
 })
 Agent({
   "subagent_type": "general-purpose",
   "team_name": "ai-docs-gen",
-  "name": "doc-writer-2",
-  "description": "Write docs 05-07",
-  "prompt": "<Writer Prompt — assigned: 05, 06, 07>"
+  "name": "writer-api-auth",
+  "description": "Write 06_API auth fragment",
+  "prompt": "<Writer Prompt — assigned from skeleton plan>"
 })
+```
+
+After all fragments for a split doc complete:
+
+```json
 Agent({
   "subagent_type": "general-purpose",
   "team_name": "ai-docs-gen",
-  "name": "doc-writer-3",
-  "description": "Write docs 08-11",
-  "prompt": "<Writer Prompt — assigned: 08, 09, 10, 11>"
+  "name": "owner-api",
+  "description": "Integrate 06_API.md from fragments",
+  "prompt": "<Doc Owner Prompt — assigned from skeleton plan>"
 })
 ```
 
@@ -361,26 +408,44 @@ You are a documentation writer agent in the "ai-docs-gen" team.
 
 ## Step 1: Read These Files
 1. ai-docs/SPEC.md — §0 (Hard Rules), §4 (Common Principles), §5 (your assigned docs only)
-2. ai-docs/.skeleton.md — Shared Facts, Cross-Reference Map, TODO Registry, Section Numbering
+2. ai-docs/.skeleton.md — Shared Facts, Cross-Reference Map, TODO Registry, Section Numbering, Workload Matrix, Agent Assignment Plan
 
-## Step 2: Your Assigned Documents
-[LIST — e.g.:]
-- 01_ENVIRONMENT.md (Task ID: 1)
-- 02_DEPENDENCIES.md (Task ID: 2)
-- 03_ARCHITECTURE.md (Task ID: 3)
-- 04_STRUCTURE.md (Task ID: 4)
+## Step 2: Your Assigned Outputs
+[COPY THE EXACT ROW FROM ## G. Agent Assignment Plan]
 
-## Step 3: For Each Document
+You may be one of:
+- bundled writer: produce one or more final ai-docs/XX_FILE.md files
+- single-doc writer: produce one final ai-docs/XX_FILE.md file
+- section/domain fragment writer: produce only ai-docs/.fragments/<doc-section>.md
+- doc owner/integrator: merge fragments into one final ai-docs/XX_FILE.md
+
+## Step 3: For Each Assigned Output
 1. TaskUpdate({ "taskId": "<id>", "status": "in_progress" })
-2. Read relevant source files (identify from skeleton + your own exploration)
-3. Write ai-docs/XX_FILE.md following:
+2. Read relevant source files from your assigned `Source Scope`; use the File-to-Document Map and Workload Matrix to avoid missing heavy areas.
+3. Write your assigned final file or fragment following:
    - SPEC rules (evidence-based, tables over prose)
    - Skeleton's Shared Facts — BOTH Value Facts AND Classification Map (do NOT re-derive independently)
    - Skeleton's Section Numbering (§ numbers exactly as assigned)
    - Skeleton's Cross-Reference Map (canonical = full detail, mention = one-line + → ref)
    - ## Evidence at end
    - Metadata: > Generated: YYYY-MM-DD | Based on commit: <hash from skeleton>
+   - For heavy/critical docs, cover the Workload Matrix key units assigned to you (endpoints, tables, jobs, services, etc.).
 4. TaskUpdate({ "taskId": "<id>", "status": "completed" })
+
+## Fragment Rule
+If you are a fragment writer:
+- Do NOT create or edit the final `ai-docs/XX_FILE.md`.
+- Write only your fragment under `ai-docs/.fragments/`.
+- Include a local `## Evidence` section for the fragment.
+- Include a short "handoff notes" block for the doc owner: coverage completed, possible gaps, and files not inspected.
+
+## Doc Owner / Integrator Rule
+If you are a doc owner/integrator:
+- Read all fragments for your document.
+- Spot-check the highest-risk source files yourself.
+- Merge into the final `ai-docs/XX_FILE.md`.
+- Remove duplication and resolve contradictory fragment claims by checking source files.
+- Ensure the final document follows SPEC section numbering and has one final `## Evidence` section.
 
 ## Conflict Escalation Rule
 If you encounter a cross-cutting fact (component category, rendering mode, config flag, etc.)
@@ -399,7 +464,7 @@ SendMessage({
 [ABSOLUTE PATH TO PROJECT ROOT]
 ```
 
-### 2-4. Monitor & Shutdown Write Team
+### 2-6. Monitor & Shutdown Write Team
 
 ```json
 TaskList()  // check progress periodically
@@ -412,12 +477,10 @@ TaskList()  // check progress periodically
 - After all other tasks complete, attempt the failed task by spawning a replacement agent
 - If replacement also fails, the orchestrator writes the document directly as fallback
 
-When all 11 tasks completed:
+When all Write Team tasks from the assignment plan are completed:
 
 ```json
-SendMessage({ "type": "shutdown_request", "recipient": "doc-writer-1", "content": "All tasks complete" })
-SendMessage({ "type": "shutdown_request", "recipient": "doc-writer-2", "content": "All tasks complete" })
-SendMessage({ "type": "shutdown_request", "recipient": "doc-writer-3", "content": "All tasks complete" })
+SendMessage({ "type": "shutdown_request", "recipient": "<each writer/owner agent from plan>", "content": "All tasks complete" })
 
 // After all confirm shutdown
 // Uses current team context — no need to specify name
@@ -426,63 +489,54 @@ TeamDelete()
 
 ---
 
-## Step 3: Review Team (ai-docs-review)
+## Step 3: Review Team (ai-docs-review, Workload-Based)
 
-### 3-1. Create Team & Tasks
+### 3-1. Read Review Assignment Plan
+
+Before creating review tasks, the orchestrator reads the `### Review Team` table under `ai-docs/.skeleton.md` section `## G. Agent Assignment Plan`.
+
+Reviewers are assigned by risk and coverage need, not by writer grouping. A large `06_API.md` may need endpoint-contract and auth reviewers; a large `05_DATA_MODELS.md` may need final-state migration review; a large `07_BUSINESS_LOGIC.md` may need runtime-flow, scheduler, and external-side-effect reviewers.
+
+### 3-2. Create Team & Tasks Dynamically
+
+Create one task per row in the skeleton's Review Team plan, including the cross-checker row.
 
 ```json
 // Generate unique team name to prevent collision with stale teams from crashed runs
 // Format: ai-docs-review-{YYYYMMDD-HHmmss} (e.g., ai-docs-review-20260220-144500)
-TeamCreate({ "team_name": "ai-docs-review-{timestamp}", "description": "AI docs review and verification" })
+TeamCreate({ "team_name": "ai-docs-review-{timestamp}", "description": "AI docs workload-based review and verification" })
 
-// Reviewer tasks (parallel)
-TaskCreate({ "subject": "Review docs 01-04", "description": "Deep review + fix 01_ENVIRONMENT, 02_DEPENDENCIES, 03_ARCHITECTURE, 04_STRUCTURE", "activeForm": "Reviewing docs 01-04" })
-TaskCreate({ "subject": "Review docs 05-07", "description": "Deep review + fix 05_DATA_MODELS, 06_API, 07_BUSINESS_LOGIC", "activeForm": "Reviewing docs 05-07" })
-TaskCreate({ "subject": "Review docs 08-11", "description": "Deep review + fix 08_DEBUG, 09_STANDARDS, 10_WARNINGS, 11_TODO", "activeForm": "Reviewing docs 08-11" })
-
-// Cross-checker task (blocked by reviewers)
+TaskCreate({ "subject": "reviewer-api-contracts", "description": "Review 06_API endpoint contracts against routes/schemas/auth", "activeForm": "Reviewing API contracts" })
+TaskCreate({ "subject": "reviewer-data-final-state", "description": "Review 05_DATA_MODELS against models and migrations final state", "activeForm": "Reviewing data model final state" })
 TaskCreate({ "subject": "Verify consistency + write INDEX", "description": "Check §/cross-ref/shared-facts across all docs, write 00_INDEX.md", "activeForm": "Verifying consistency" })
-
-// Set dependency: cross-checker waits for all reviewers
-TaskUpdate({ "taskId": "4", "addBlockedBy": ["1", "2", "3"] })
 ```
 
-### 3-2. Assign Tasks
+The example above is illustrative only. Use the actual review plan rows.
 
-> **Note**: Task IDs shown below (1-4) assume sequential creation within a fresh team.
-> If the Team API assigns different IDs, use the actual IDs returned by TaskCreate.
-> The orchestrator should track the mapping: document name → taskId.
+### 3-3. Assign Dependencies
 
-```json
-TaskUpdate({ "taskId": "1", "owner": "reviewer-1" })
-TaskUpdate({ "taskId": "2", "owner": "reviewer-2" })
-TaskUpdate({ "taskId": "3", "owner": "reviewer-3" })
-TaskUpdate({ "taskId": "4", "owner": "cross-checker" })
-```
+Use the `Blocked By` column in the Review Team plan:
 
-### 3-3. Spawn Reviewers (parallel, single message)
+- Content reviewers are blocked by the relevant final document owner/writer tasks.
+- The cross-checker is blocked by all reviewers.
+- If a heavy/critical doc has multiple reviewers, they may run in parallel against the same final doc, but each must keep edits scoped to their review domain. If two reviewers need to edit the same paragraph, the later reviewer must re-read the current file before editing.
+
+### 3-4. Spawn Reviewers (parallel, by dependency wave)
 
 ```json
 Agent({
   "subagent_type": "general-purpose",
   "team_name": "ai-docs-review",
-  "name": "reviewer-1",
-  "description": "Review and fix docs 01-04",
-  "prompt": "<Reviewer Prompt — assigned: 01, 02, 03, 04>"
+  "name": "reviewer-api-contracts",
+  "description": "Review and fix 06_API endpoint contracts",
+  "prompt": "<Reviewer Prompt — assigned from skeleton plan>"
 })
 Agent({
   "subagent_type": "general-purpose",
   "team_name": "ai-docs-review",
-  "name": "reviewer-2",
-  "description": "Review and fix docs 05-07",
-  "prompt": "<Reviewer Prompt — assigned: 05, 06, 07>"
-})
-Agent({
-  "subagent_type": "general-purpose",
-  "team_name": "ai-docs-review",
-  "name": "reviewer-3",
-  "description": "Review and fix docs 08-11",
-  "prompt": "<Reviewer Prompt — assigned: 08, 09, 10, 11>"
+  "name": "reviewer-data-final-state",
+  "description": "Review and fix 05_DATA_MODELS final state",
+  "prompt": "<Reviewer Prompt — assigned from skeleton plan>"
 })
 ```
 
@@ -497,14 +551,12 @@ Your goal is to bring them to ~95%+ by finding and fixing gaps.
 
 ## Step 1: Read These Files
 1. ai-docs/SPEC.md — §0 (Hard Rules), §4 (Common Principles), §5 (your assigned docs)
-2. ai-docs/.skeleton.md — Shared Facts, Cross-Reference Map, TODO Registry, Section Numbering
+2. ai-docs/.skeleton.md — Shared Facts, Cross-Reference Map, TODO Registry, Section Numbering, Workload Matrix, Agent Assignment Plan
 
-## Step 2: Your Assigned Documents
-[LIST — e.g.:]
-- ai-docs/01_ENVIRONMENT.md (Task ID: 1)
-- ai-docs/02_DEPENDENCIES.md (Task ID: 2)
-- ai-docs/03_ARCHITECTURE.md (Task ID: 3)
-- ai-docs/04_STRUCTURE.md (Task ID: 4)
+## Step 2: Your Assigned Review Scope
+[COPY THE EXACT ROW FROM ## G. Agent Assignment Plan / Review Team]
+
+Review only the assigned documents and source scope. Do not redo another reviewer's domain unless you find a direct contradiction.
 
 ## Step 3: For Each Document
 1. TaskUpdate({ "taskId": "<id>", "status": "in_progress" })
@@ -514,6 +566,7 @@ Your goal is to bring them to ~95%+ by finding and fixing gaps.
 4. Check against SPEC §5 requirements for this document type:
    - Are all mandatory sections present?
    - Are all items covered? (e.g., every endpoint in 06, every table in 05, every env var in 01)
+   - For heavy/critical docs, does coverage match the Workload Matrix key units?
    - Are descriptions accurate against the actual source code?
    - Are cross-references valid and following the skeleton's map?
    - Are § numbers matching the skeleton?
@@ -544,16 +597,16 @@ SendMessage({
   "type": "message",
   "recipient": "leader",
   "content": "Review complete for [files].\n\nPer-doc summary:\n- 01: [changes made]\n- 02: [changes made]\n...",
-  "summary": "Review 01-04 complete"
+  "summary": "Assigned review scope complete"
 })
 
 ## Working Directory
 [ABSOLUTE PATH TO PROJECT ROOT]
 ```
 
-### 3-4. After Reviewers Complete → Spawn Cross-Checker
+### 3-5. After Reviewers Complete → Spawn Cross-Checker
 
-When all 3 reviewer tasks are `completed`:
+When all reviewer tasks from the skeleton's Review Team plan are `completed`:
 
 ```json
 Agent({
@@ -603,12 +656,12 @@ verify that ALL documents mentioning that file use the SAME classification.
 If two documents disagree (e.g., one calls a component "server", another calls it "client"),
 check the actual source file and fix ALL incorrect documents.
 
-**Cross-partition consistency check**: Writers work in partitions (01-04, 05-07, 08-11).
-Cross-partition contradictions (e.g., 03_ARCHITECTURE vs 05_DATA_MODELS describing the same flow differently)
-are NOT caught by reviewers since they review the same partition. You MUST:
-- Scan for overlapping topics across partition boundaries
-- Verify that cross-references between partitions resolve correctly
-- Fix any factual contradictions between documents from different partitions
+**Cross-agent consistency check**: Writers and reviewers are workload-based, so related facts may be touched by different agents.
+Contradictions across final documents or fragments (e.g., 03_ARCHITECTURE vs 05_DATA_MODELS describing the same flow differently)
+may not be caught by targeted reviewers. You MUST:
+- Scan for overlapping topics across document boundaries
+- Verify that cross-references between documents resolve correctly
+- Fix any factual contradictions between documents by checking source files
 
 Fix any structural issues with Edit tool.
 
@@ -649,16 +702,14 @@ SendMessage({
 - If still stuck after another 5 minutes, note the failure and proceed with remaining tasks
 - After all other reviewer tasks complete, attempt the failed task by spawning a replacement reviewer
 - If replacement also fails, the orchestrator performs the review directly as fallback
-- The cross-checker only spawns after all 3 reviewer tasks are `completed`
+- The cross-checker only spawns after all reviewer tasks from the assignment plan are `completed`
 
-### 3-5. Shutdown Review Team
+### 3-6. Shutdown Review Team
 
 After cross-checker reports:
 
 ```json
-SendMessage({ "type": "shutdown_request", "recipient": "reviewer-1", "content": "All tasks complete" })
-SendMessage({ "type": "shutdown_request", "recipient": "reviewer-2", "content": "All tasks complete" })
-SendMessage({ "type": "shutdown_request", "recipient": "reviewer-3", "content": "All tasks complete" })
+SendMessage({ "type": "shutdown_request", "recipient": "<each reviewer agent from plan>", "content": "All tasks complete" })
 SendMessage({ "type": "shutdown_request", "recipient": "cross-checker", "content": "All tasks complete" })
 
 // Uses current team context — no need to specify name

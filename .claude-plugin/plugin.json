@@ -1,7 +1,7 @@
 {
   "name": "ai-docs",
   "version": "1.0.0",
-  "description": "AI-optimized project documentation generator using agent teams. Creates structured docs that enable any AI to work on a project immediately.",
+  "description": "AI-docs v1.5 generator: v1 12-document output with workload-based Claude agent allocation for scouts, writers, reviewers, and cross-checker.",
   "author": {
     "name": "aminpiano"
   }
